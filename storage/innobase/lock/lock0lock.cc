@@ -59,6 +59,13 @@ Created 5/7/1996 Heikki Tuuri
 
 #include <set>
 
+#include <atomic>
+#include <cstdlib>
+#include <thread>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
 /* Flag to enable/disable deadlock detector. */
 my_bool	innobase_deadlock_detect = TRUE;
 
@@ -7593,6 +7600,12 @@ DeadlockChecker::trx_rollback()
 	trx_mutex_exit(trx);
 }
 
+static std::atomic<std::thread*> deadlock_checker_notifier(new std::thread([]() {
+	// Wait for all checker child process and assume we do the rollback here
+	while (true)
+		wait(NULL);
+}));
+
 /** Checks if a joining lock request results in a deadlock. If a deadlock is
 found this function will resolve the deadlock by choosing a victim transaction
 and rolling it back. It will attempt to resolve all deadlocks. The returned
@@ -7630,7 +7643,15 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 
 	trx_mutex_exit(trx);
 
-	const trx_t*	victim_trx;
+	const trx_t*	victim_trx = NULL;
+	
+	MONITOR_ATOMIC_INC(MONITOR_DEADLOCK_CHECKER_FORK);
+
+	// We do not care about the child pid at this time
+	if (fork() != 0) { // We are the parent
+		goto done;
+	}
+	// Otherwise, we are the children
 
 	/* Try and resolve as many deadlocks as possible. */
 	do {
@@ -7673,6 +7694,10 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 
 		lock_deadlock_found = true;
 	}
+
+	exit(0);
+
+done:
 
 	trx_mutex_enter(trx);
 

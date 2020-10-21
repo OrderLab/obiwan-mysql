@@ -106,6 +106,10 @@ static monitor_info_t	innodb_counter_info[] =
 	 MONITOR_DEFAULT_ON,
 	 MONITOR_DEFAULT_START, MONITOR_DEADLOCK},
 
+	{"lock_deadlock_checker_forks", "lock", "Number of deadlock checker forks",
+	 MONITOR_DEFAULT_ON,
+	 MONITOR_DEFAULT_START, MONITOR_DEADLOCK_CHECKER_FORK},
+
 	{"lock_timeouts", "lock", "Number of lock timeouts",
 	 MONITOR_DEFAULT_ON,
 	 MONITOR_DEFAULT_START, MONITOR_TIMEOUT},
