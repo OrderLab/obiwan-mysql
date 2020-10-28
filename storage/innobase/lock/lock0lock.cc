@@ -66,6 +66,11 @@ Created 5/7/1996 Heikki Tuuri
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "rkdef.h"
+
+std::atomic_size_t all_log_count(0);
+std::vector<Rec> all_log(RKLOGMAX);
+
 /* Flag to enable/disable deadlock detector. */
 my_bool	innobase_deadlock_detect = TRUE;
 
@@ -7633,6 +7638,8 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 		return(NULL);
 	}
 
+    auto t1 = high_resolution_clock::now();
+
 	/*  Release the mutex to obey the latching order.
 	This is safe, because DeadlockChecker::check_and_resolve()
 	is invoked when a lock wait is enqueued for the currently
@@ -7698,6 +7705,8 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 	exit(0);
 
 done:
+    auto t2 = high_resolution_clock::now();
+    put_log(DLCK, pthread_self(), duration_cast<nanoseconds>(t2 - t1).count());
 
 	trx_mutex_enter(trx);
 

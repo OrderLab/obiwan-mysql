@@ -29,16 +29,40 @@ extern int mysqld_main(int argc, char **argv);
 
 #include <sys/types.h>
 #include <unistd.h>
+#include <stdlib.h>
+#include <signal.h>
+#include <string>
+#include <fstream>
 #include <thread>
 #include <chrono>
+
+#include "rkdef.h"
 
 int main(int argc, char **argv)
 {
 	// This is a hack for deadlock checker waiter.
 	// It must have at least one child to wait.
-	if (fork() == 0) {
+    pid_t forkres = fork();
+	if (forkres == 0) {
 		while(true)
 		   std::this_thread::sleep_for(std::chrono::hours(24));
 	}
-  return mysqld_main(argc, argv);
+    all_log.reserve(RKLOGMAX);
+
+  // return mysqld_main(argc, argv);
+    int mysqld_res = mysqld_main(argc, argv);
+
+    kill(forkres, SIGTERM);
+
+    (void)!system("mkdir -p /tmp/mysql-log-data");
+    std::string data_file_name = "/tmp/mysql-log-data/mysql-" + std::to_string(getpid())
+        + ".data";
+
+    std::ofstream os(data_file_name);
+    for (size_t i = 0, end = all_log_count; i < end; ++i) {
+        auto &log = all_log[i];
+        os << log.rec_type << ' ' << log.tid << ' ' << log.duration << '\n';
+    }
+
+    return mysqld_res;
 }

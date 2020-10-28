@@ -119,6 +119,8 @@
 #include <algorithm>
 using std::max;
 
+#include "rkdef.h"
+
 /**
   @defgroup Runtime_Environment Runtime Environment
   @{
@@ -911,6 +913,7 @@ bool do_command(THD *thd)
   enum enum_server_command command;
   COM_DATA com_data;
   DBUG_ENTER("do_command");
+  auto t1 = high_resolution_clock::now();
 
   /*
     indicator of uninitialized lex => normal flow of errors handling
@@ -1034,6 +1037,8 @@ bool do_command(THD *thd)
       thd->variables.net_buffer_length);
 
 out:
+  auto t2 = high_resolution_clock::now();
+  put_log(DOCMD, pthread_self(), duration_cast<nanoseconds>(t2 - t1).count());
   /* The statement instrumentation must be closed in all cases. */
   DBUG_ASSERT(thd->m_digest == NULL);
   DBUG_ASSERT(thd->m_statement_psi == NULL);
