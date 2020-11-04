@@ -22,7 +22,7 @@ extern std::vector<Rec> all_log;
 
 inline void put_log(RecType r, pthread_t t, long long d) {
     size_t count = all_log_count++;
-    if (all_log_count >= RKLOGMAX) {
+    if (all_log_count < RKLOGMAX) {
         all_log[count].rec_type = r;
         all_log[count].tid = t;
         all_log[count].duration = d;

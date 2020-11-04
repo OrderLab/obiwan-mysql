@@ -54,15 +54,6 @@ int main(int argc, char **argv)
 
     kill(forkres, SIGTERM);
 
-    (void)!system("mkdir -p /tmp/mysql-log-data");
-    std::string data_file_name = "/tmp/mysql-log-data/mysql-" + std::to_string(getpid())
-        + ".data";
-
-    std::ofstream os(data_file_name);
-    for (size_t i = 0, end = all_log_count; i < end; ++i) {
-        auto &log = all_log[i];
-        os << log.rec_type << ' ' << log.tid << ' ' << log.duration << '\n';
-    }
 
     return mysqld_res;
 }

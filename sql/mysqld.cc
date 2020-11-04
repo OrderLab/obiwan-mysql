@@ -155,6 +155,12 @@
 #include "item_strfunc.h"               // Item_func_uuid
 #include "handler.h"
 
+#include "rkdef.h"
+#include <string>
+#include <fstream>
+#include <cstdlib>
+#include <thread>
+
 #ifndef EMBEDDED_LIBRARY
 #include "srv_session.h"
 #endif
@@ -1973,6 +1979,27 @@ static void empty_signal_handler(int sig MY_ATTRIBUTE((unused)))
 { }
 }
 
+std::atomic_bool should_output_all_log(false);
+
+std::thread output_all_log_bg([]() {
+    do {
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    } while (!should_output_all_log);
+
+    (void)!system("mkdir -p /tmp/mysql-log-data");
+    std::string data_file_name = "/tmp/mysql-log-data/mysql-" + std::to_string(getpid())
+        + ".data";
+
+    std::ofstream os(data_file_name);
+    for (size_t i = 0, end = all_log_count; i < end; ++i) {
+        auto &log = all_log[i];
+        os << log.rec_type << ' ' << log.tid << ' ' << log.duration << '\n';
+    }
+});
+
+void output_all_log(int) {
+    should_output_all_log = true;
+}
 
 void my_init_signals()
 {
@@ -2021,6 +2048,9 @@ void my_init_signals()
   // SIGUSR1 is used to interrupt the socket listener.
   sa.sa_handler= empty_signal_handler;
   (void) sigaction(SIGUSR1, &sa, NULL);
+
+  // RK: SIGUSR2 is used to output all_log
+  (void)signal(SIGUSR2, output_all_log);
 
   // Fix signals if ignored by parents (can happen on Mac OS X).
   sa.sa_handler= SIG_DFL;
