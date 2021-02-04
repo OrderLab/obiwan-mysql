@@ -155,6 +155,12 @@
 #include "item_strfunc.h"               // Item_func_uuid
 #include "handler.h"
 
+#include "rkdef.h"
+#include <string>
+#include <fstream>
+#include <cstdlib>
+#include <thread>
+
 #ifndef EMBEDDED_LIBRARY
 #include "srv_session.h"
 #endif
@@ -1281,12 +1287,25 @@ static void free_connection_acceptors()
 }
 #endif
 
+void output_all_log() {
+    (void)!system("mkdir -p /tmp/mysql-log-data");
+    std::string data_file_name = "/tmp/mysql-log-data/mysql-" + std::to_string(getpid())
+        + ".data";
+
+    std::ofstream os(data_file_name);
+    for (size_t i = 0, end = std::min(size_t(all_log_count), size_t(RKLOGMAX)); i < end; ++i) {
+        auto &log = all_log[i];
+        os << log.rec_type << ' ' << log.tid << ' ' << log.duration << '\n';
+    }
+}
 
 void clean_up(bool print_message)
 {
   DBUG_PRINT("exit",("clean_up"));
   if (cleanup_done++)
     return; /* purecov: inspected */
+
+  output_all_log();
 
   stop_handle_manager();
   release_ddl_log();
@@ -1972,7 +1991,6 @@ extern "C" {
 static void empty_signal_handler(int sig MY_ATTRIBUTE((unused)))
 { }
 }
-
 
 void my_init_signals()
 {
