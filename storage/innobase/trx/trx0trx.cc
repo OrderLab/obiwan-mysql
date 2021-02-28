@@ -61,8 +61,12 @@ Created 3/26/1996 Heikki Tuuri
 #include "ut0pool.h"
 #include "ut0vec.h"
 
+#include "orbit.h"
+
 #include <set>
 #include <new>
+#include <atomic>
+// #include <mutex>
 
 static const ulint MAX_DETAILED_ERROR_LEN = 256;
 
@@ -521,6 +525,11 @@ trx_free(trx_t*& trx)
 	trx = NULL;
 }
 
+std::atomic_flag obflag;
+std::atomic_bool obinited;
+std::atomic<struct obModule *> ob;
+std::atomic<struct obPool *> pool;
+
 /********************************************************************//**
 Creates a transaction object for background operations by the master thread.
 @return own: transaction object */
@@ -535,6 +544,11 @@ trx_allocate_for_background(void)
 	trx->sess = trx_dummy_sess;
 
 	return(trx);
+}
+
+unsigned long ob_checker(void *block)
+{
+	return *(int*)( ((char*)block) + 4096 ) + *(int*)block;
 }
 
 /********************************************************************//**
@@ -554,6 +568,22 @@ trx_allocate_for_mysql(void)
 	UT_LIST_ADD_FIRST(trx_sys->mysql_trx_list, trx);
 
 	trx_sys_mutex_exit();
+
+	if (!obflag.test_and_set()) {
+		pool = obPoolCreate(4096 * 512 * 64);
+		ob = obCreate("", ob_checker);
+		obinited = true;
+	}
+
+	while (!obinited)
+		;
+
+	void *block = obPoolAllocate(pool, OB_BLOCK);
+	*(int*)( ((char*)block) + 4096 ) = *(int*)block = 1;
+	int ret = obCallAsync(ob, pool, block, NULL);
+	if (ret != 0) {
+		ib::error() << "ob async call returned " << ret;
+	}
 
 	return(trx);
 }
