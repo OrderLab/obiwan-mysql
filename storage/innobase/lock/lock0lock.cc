@@ -57,7 +57,15 @@ Created 5/7/1996 Heikki Tuuri
 #include "row0mysql.h"
 #include "pars0pars.h"
 
+#include "orbit.h"
+
 #include <set>
+
+#define orbit_update(scratch, lval, rval) \
+	do { \
+		(lval) = (rval); \
+		orbit_scratch_push_update((scratch), &(lval), sizeof(rval)); \
+	} while (0)
 
 /* Flag to enable/disable deadlock detector. */
 my_bool	innobase_deadlock_detect = TRUE;
@@ -92,6 +100,18 @@ public:
 	static const trx_t* check_and_resolve(
 		const lock_t*	lock,
 		trx_t*		trx);
+
+private:
+	struct orbit_args {
+		const lock_t* lock;
+		trx_t* trx;
+	};
+
+	static const trx_t* check_and_resolve_inner(
+		const lock_t*	lock,
+		trx_t*		trx);
+
+	static unsigned long check_and_resolve_inner_orbit(void *aux);
 
 private:
 	/** Do a shallow copy. Default destructor OK.
@@ -203,7 +223,7 @@ private:
 	const trx_t* select_victim() const;
 
 	/** Rollback transaction selected as the victim. */
-	void trx_rollback();
+	void trx_rollback(orbit_scratch *scratch = NULL);
 
 	/** Looks iteratively for a deadlock. Note: the joining transaction
 	may have been granted its lock by the deadlock checks.
@@ -432,6 +452,9 @@ lock_sec_rec_cons_read_sees(
 	return(view->sees(max_trx_id));
 }
 
+// TODO: one pool per type of object
+extern obPool *trx_ob_pool;
+
 /*********************************************************************//**
 Creates the lock system at database start. */
 void
@@ -443,7 +466,8 @@ lock_sys_create(
 
 	lock_sys_sz = sizeof(*lock_sys) + OS_THREAD_MAX_N * sizeof(srv_slot_t);
 
-	lock_sys = static_cast<lock_sys_t*>(ut_zalloc_nokey(lock_sys_sz));
+	lock_sys = static_cast<lock_sys_t*>(obPoolAllocate(trx_ob_pool, lock_sys_sz));
+	// lock_sys = static_cast<lock_sys_t*>(ut_zalloc_nokey(lock_sys_sz));
 
 	void*	ptr = &lock_sys[1];
 
@@ -457,9 +481,9 @@ lock_sys_create(
 
 	lock_sys->timeout_event = os_event_create(0);
 
-	lock_sys->rec_hash = hash_create(n_cells);
-	lock_sys->prdt_hash = hash_create(n_cells);
-	lock_sys->prdt_page_hash = hash_create(n_cells);
+	lock_sys->rec_hash = hash_create(n_cells, trx_ob_pool);
+	lock_sys->prdt_hash = hash_create(n_cells, trx_ob_pool);
+	lock_sys->prdt_page_hash = hash_create(n_cells, trx_ob_pool);
 
 	if (!srv_read_only_mode) {
 		lock_latest_err_file = os_file_create_tmpfile(NULL);
@@ -486,6 +510,8 @@ lock_sys_resize(
 	ulint	n_cells)
 {
 	hash_table_t*	old_hash;
+	ib::error() << "Orbit does not yet support resize.";
+	abort();
 
 	lock_mutex_enter();
 
@@ -546,9 +572,9 @@ lock_sys_close(void)
 		lock_latest_err_file = NULL;
 	}
 
-	hash_table_free(lock_sys->rec_hash);
-	hash_table_free(lock_sys->prdt_hash);
-	hash_table_free(lock_sys->prdt_page_hash);
+	hash_table_free(lock_sys->rec_hash, trx_ob_pool);
+	hash_table_free(lock_sys->prdt_hash, trx_ob_pool);
+	hash_table_free(lock_sys->prdt_page_hash, trx_ob_pool);
 
 	os_event_destroy(lock_sys->timeout_event);
 
@@ -563,7 +589,8 @@ lock_sys_close(void)
 		}
 	}
 
-	ut_free(lock_sys);
+	obPoolDeallocate(trx_ob_pool, lock_sys, 1);
+	// ut_free(lock_sys);
 
 	lock_sys = NULL;
 }
@@ -751,6 +778,24 @@ lock_reset_lock_and_trx_wait(
 
 	lock->trx->lock.wait_lock = NULL;
 	lock->type_mode &= ~LOCK_WAIT;
+}
+
+UNIV_INLINE
+void
+lock_reset_lock_and_trx_wait_orbit(
+/*=========================*/
+	lock_t*	lock,	/*!< in/out: record lock */
+	orbit_scratch *scratch)
+{
+	ut_ad(lock->trx->lock.wait_lock == lock);
+	ut_ad(lock_get_wait(lock));
+	ut_ad(lock_mutex_own());
+
+	// lock->trx->lock.wait_lock = NULL;
+	orbit_update(scratch, lock->trx->lock.wait_lock, NULL);
+
+	// lock->type_mode &= ~LOCK_WAIT;
+	orbit_update(scratch, lock->type_mode, lock->type_mode & ~LOCK_WAIT);
 }
 
 /*********************************************************************//**
@@ -1449,6 +1494,8 @@ RecLock::lock_alloc(
 		ulint		n_bytes = size + sizeof(*lock);
 		mem_heap_t*	heap = trx->lock.lock_heap;
 
+		ib::error() << "Orbit currently does not support heap.";
+		abort();
 		lock = reinterpret_cast<lock_t*>(mem_heap_alloc(heap, n_bytes));
 	} else {
 
@@ -1492,6 +1539,8 @@ RecLock::lock_alloc(
 	MONITOR_INC(MONITOR_NUM_RECLOCK);
 
 	MONITOR_INC(MONITOR_RECLOCK_CREATED);
+
+	fprintf(stderr, "lock_alloc returns %p\n", lock);
 
 	return(lock);
 }
@@ -6792,6 +6841,81 @@ lock_cancel_waiting_and_release(
 	lock->trx->lock.cancel = false;
 }
 
+unsigned long lock_cancel_waiting_and_release_orbit_tail(
+	size_t argc, unsigned long argv[])
+{
+	assert(argc == 1);
+	lock_t *lock = (lock_t *)argv[0];
+
+	que_thr_t*	thr;
+
+	thr = que_thr_end_lock_wait(lock->trx);
+
+	if (thr != NULL) {
+		lock_wait_release_thread_if_suspended(thr);
+	}
+
+	return 0;
+}
+
+unsigned long lock_rec_dequeue_from_page_orbit(
+	size_t argc, unsigned long argv[])
+{
+	assert(argc == 1);
+	lock_rec_dequeue_from_page((lock_t *)argv[0]);
+	return 0;
+}
+
+void
+lock_cancel_waiting_and_release_orbit(
+/*============================*/
+	lock_t*	lock,	/*!< in/out: waiting lock request */
+	orbit_scratch *scratch)
+{
+	// que_thr_t*	thr;
+
+	ut_ad(lock_mutex_own());
+	ut_ad(trx_mutex_own(lock->trx));
+
+	// lock->trx->lock.cancel = true;
+	orbit_update(scratch, lock->trx->lock.cancel, true);
+
+	unsigned long args[] = {(unsigned long)lock};
+
+	if (lock_get_type_low(lock) == LOCK_REC) {
+
+		// lock_rec_dequeue_from_page(lock);
+		orbit_scratch_push_operation(scratch,
+			lock_rec_dequeue_from_page_orbit,
+			1, args);
+	} else {
+		ib::error() << "Orbit does not support rollback table lock.";
+		abort();
+		ut_ad(lock_get_type_low(lock) & LOCK_TABLE);
+
+		if (lock->trx->autoinc_locks != NULL) {
+			/* Release the transaction's AUTOINC locks. */
+			lock_release_autoinc_locks(lock->trx);
+		}
+
+		lock_table_dequeue(lock);
+	}
+
+	/* Reset the wait flag and the back pointer to lock in trx. */
+
+	lock_reset_lock_and_trx_wait_orbit(lock, scratch);
+
+	/* The following function releases the trx from lock wait. */
+
+	orbit_scratch_push_operation(scratch,
+		lock_cancel_waiting_and_release_orbit_tail,
+		1, args);
+
+	// lock->trx->lock.cancel = false;
+	orbit_update(scratch, lock->trx->lock.cancel, false);
+}
+
+
 /*********************************************************************//**
 Unlocks AUTO_INC type locks that were possibly reserved by a trx. This
 function should be called at the the end of an SQL statement, by the
@@ -7308,6 +7432,8 @@ DeadlockChecker::get_next_lock(const lock_t* lock, ulint heap_no) const
 	ut_ad(lock == NULL
 	      || lock_get_type_low(lock) == lock_get_type_low(m_wait_lock));
 
+	fprintf(stderr, "in checker next_lock is %p is rec: %d\n",
+		lock, lock_get_type_low(lock) == LOCK_REC);
 	return(lock);
 }
 
@@ -7374,6 +7500,8 @@ DeadlockChecker::get_first_lock(ulint* heap_no) const
 	/* Check that the lock type doesn't change. */
 	ut_ad(lock_get_type_low(lock) == lock_get_type_low(m_wait_lock));
 
+	fprintf(stderr, "in checker first_lock is %p is rec: %d\n",
+		lock, lock_get_type_low(lock) == LOCK_REC);
 	return(lock);
 }
 
@@ -7424,8 +7552,9 @@ DeadlockChecker::select_victim() const
 	ut_ad(m_start->lock.wait_lock != 0);
 	ut_ad(m_wait_lock->trx != m_start);
 
-	if (thd_trx_priority(m_start->mysql_thd) > 0
-	    || thd_trx_priority(m_wait_lock->trx->mysql_thd) > 0) {
+	// TODO: current checker cannot access thd
+	if (0 && (thd_trx_priority(m_start->mysql_thd) > 0
+	    || thd_trx_priority(m_wait_lock->trx->mysql_thd) > 0)) {
 
 		const trx_t*	victim;
 
@@ -7437,7 +7566,8 @@ DeadlockChecker::select_victim() const
 		}
 	}
 
-	if (trx_weight_ge(m_wait_lock->trx, m_start)) {
+	// if (0 && trx_weight_ge(m_wait_lock->trx, m_start)) {
+	if (TRX_WEIGHT(m_wait_lock->trx) >= TRX_WEIGHT(m_start)) {
 
 		/* The joining transaction is 'smaller',
 		choose it as the victim and roll it back. */
@@ -7574,10 +7704,51 @@ DeadlockChecker::rollback_print(const trx_t*	trx, const lock_t* lock)
 	print(lock);
 }
 
+unsigned long trx_mutex_enter_orbit(size_t argc, unsigned long argv[])
+{
+	assert(argc == 1);
+	trx_mutex_enter(((trx_t *)argv[0]));
+	return 0;
+}
+
+unsigned long trx_mutex_exit_orbit(size_t argc, unsigned long argv[])
+{
+	assert(argc == 1);
+	trx_mutex_exit(((trx_t *)argv[0]));
+	return 0;
+}
+
 /** Rollback transaction selected as the victim. */
 void
-DeadlockChecker::trx_rollback()
+DeadlockChecker::trx_rollback(orbit_scratch *scratch)
 {
+	if (scratch) {
+		// ut_ad(lock_mutex_own());
+
+		trx_t*	trx = m_wait_lock->trx;
+
+		print("*** WE ROLL BACK TRANSACTION (1)\n");
+
+		// trx_mutex_enter(trx);
+		unsigned long args[] = {(unsigned long)trx};
+		orbit_scratch_push_operation(scratch, trx_mutex_enter_orbit,
+			1, args);
+
+		// trx->lock.was_chosen_as_deadlock_victim = true;
+		orbit_update(scratch,
+			trx->lock.was_chosen_as_deadlock_victim, true);
+
+		// lock_cancel_waiting_and_release(trx->lock.wait_lock);
+		lock_cancel_waiting_and_release_orbit(
+			trx->lock.wait_lock, scratch);
+
+		// trx_mutex_exit(trx);
+		orbit_scratch_push_operation(scratch, trx_mutex_exit_orbit,
+			1, args);
+
+		return;
+	}
+
 	ut_ad(lock_mutex_own());
 
 	trx_t*	trx = m_wait_lock->trx;
@@ -7592,6 +7763,73 @@ DeadlockChecker::trx_rollback()
 
 	trx_mutex_exit(trx);
 }
+
+orbit_scratch dld_scratch;
+int scratch_init = orbit_scratch_create(&dld_scratch, 1024 * 1024);
+
+const trx_t*
+DeadlockChecker::check_and_resolve_inner(const lock_t* lock, trx_t* trx)
+{
+	const trx_t*	victim_trx;
+
+	/* Try and resolve as many deadlocks as possible. */
+	do {
+		DeadlockChecker	checker(trx, lock, s_lock_mark_counter);
+
+		victim_trx = checker.search();
+
+		/* Search too deep, we rollback the joining transaction only
+		if it is possible to rollback. Otherwise we rollback the
+		transaction that is holding the lock that the joining
+		transaction wants. */
+		if (checker.is_too_deep()) {
+
+			ut_ad(trx == checker.m_start);
+			ut_ad(trx == victim_trx);
+
+			rollback_print(victim_trx, lock);
+
+			MONITOR_INC(MONITOR_DEADLOCK);
+
+			break;
+
+		} else if (victim_trx != NULL && victim_trx != trx) {
+			ut_ad(victim_trx == checker.m_wait_lock->trx);
+
+			fprintf(stderr, "in checker before rollback\n");
+			checker.trx_rollback(&dld_scratch);
+
+			// lock_deadlock_found = true;
+			orbit_update(&dld_scratch, lock_deadlock_found, true);
+
+			MONITOR_INC(MONITOR_DEADLOCK);
+
+			fprintf(stderr, "in checker before sending\n");
+			orbit_sendv(&dld_scratch);
+			fprintf(stderr, "in checker after sending\n");
+
+			/* TODO: allow rollback multiple transactions */
+			return NULL;
+		}
+
+	} while (victim_trx != NULL && victim_trx != trx);
+
+	fprintf(stderr, "in checker loop ended\n");
+
+	/* TODO: fix the return value, and/or modify rollback to allow
+	 * rolling back the current trx. */
+	return victim_trx;
+}
+
+unsigned long
+DeadlockChecker::check_and_resolve_inner_orbit(void *aux)
+{
+	orbit_args *args = (orbit_args*)aux;
+	fprintf(stderr, "in checker args = %p\n", args);
+	return (unsigned long)check_and_resolve_inner(args->lock, args->trx);
+}
+
+extern obPool *trx_ob_pool;
 
 /** Checks if a joining lock request results in a deadlock. If a deadlock is
 found this function will resolve the deadlock by choosing a victim transaction
@@ -7632,39 +7870,41 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 
 	const trx_t*	victim_trx;
 
-	/* Try and resolve as many deadlocks as possible. */
-	do {
-		DeadlockChecker	checker(trx, lock, s_lock_mark_counter);
+	static obModule *dld_ob = obCreate("DL CK", check_and_resolve_inner_orbit);
+	/* FIXME: notification mechanism */
+	static int global_seqid = 0;
+	int seqid = ++global_seqid;
 
-		victim_trx = checker.search();
+	if (0) {
+		victim_trx = check_and_resolve_inner(lock, trx);
+	} else {
+		orbit_args *args = (orbit_args *)obPoolAllocate(
+					trx_ob_pool, sizeof(*args));
+		args->lock = lock;
+		args->trx = trx;
+		fprintf(stderr, "before checker args = %p\n", args);
 
-		/* Search too deep, we rollback the joining transaction only
-		if it is possible to rollback. Otherwise we rollback the
-		transaction that is holding the lock that the joining
-		transaction wants. */
-		if (checker.is_too_deep()) {
+		obTask task;
+		int ret = obCallAsync(dld_ob, trx_ob_pool, args, &task);
+		ib::error() << "obCallAsync returns " << ret;
+		if (ret != 0) abort();
 
-			ut_ad(trx == checker.m_start);
-			ut_ad(trx == victim_trx);
-
-			rollback_print(victim_trx, lock);
-
-			MONITOR_INC(MONITOR_DEADLOCK);
-
-			break;
-
-		} else if (victim_trx != NULL && victim_trx != trx) {
-
-			ut_ad(victim_trx == checker.m_wait_lock->trx);
-
-			checker.trx_rollback();
-
-			lock_deadlock_found = true;
-
-			MONITOR_INC(MONITOR_DEADLOCK);
+		ib::error() << "seqid is " << seqid;
+		if ((seqid & 1) == 0) { // even numbers
+			orbit_scratch result;
+			printf("seq2 before recvv\n");
+			ret = orbit_recvv(&result, &task);
+			ib::error() << "orbit_recvv returns " << ret;
+			if (ret != 0) abort();
+			orbit_apply(&result);
 		}
 
-	} while (victim_trx != NULL && victim_trx != trx);
+		// FIXME: we still need this
+		victim_trx = NULL;
+
+		fprintf(stderr, "after checker result = %p\n", victim_trx);
+		obPoolDeallocate(trx_ob_pool, args, sizeof(*args));
+	}
 
 	/* If the joining transaction was selected as the victim. */
 	if (victim_trx != NULL) {
@@ -7686,7 +7926,8 @@ void
 lock_trx_alloc_locks(trx_t* trx)
 {
 	ulint	sz = REC_LOCK_SIZE * REC_LOCK_CACHE;
-	byte*	ptr = reinterpret_cast<byte*>(ut_malloc_nokey(sz));
+	// byte*	ptr = reinterpret_cast<byte*>(ut_malloc_nokey(sz));
+	byte*	ptr = reinterpret_cast<byte*>(obPoolAllocate(trx_ob_pool, sz));
 
 	/* We allocate one big chunk and then distribute it among
 	the rest of the elements. The allocated chunk pointer is always
@@ -7698,7 +7939,8 @@ lock_trx_alloc_locks(trx_t* trx)
 	}
 
 	sz = TABLE_LOCK_SIZE * TABLE_LOCK_CACHE;
-	ptr = reinterpret_cast<byte*>(ut_malloc_nokey(sz));
+	// ptr = reinterpret_cast<byte*>(ut_malloc_nokey(sz));
+	ptr = reinterpret_cast<byte*>(obPoolAllocate(trx_ob_pool, sz));
 
 	for (ulint i = 0; i < TABLE_LOCK_CACHE; ++i, ptr += TABLE_LOCK_SIZE) {
 		trx->lock.table_pool.push_back(

@@ -83,6 +83,7 @@ SET(INNOBASE_SOURCES
 	lock/lock0prdt.cc
 	lock/lock0lock.cc
 	lock/lock0wait.cc
+	lock/orbit.c
 	log/log0log.cc
 	log/log0recv.cc
 	mach/mach0data.cc

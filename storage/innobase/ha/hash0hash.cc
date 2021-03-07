@@ -266,7 +266,8 @@ chosen to be a prime number slightly bigger than n.
 hash_table_t*
 hash_create(
 /*========*/
-	ulint	n)	/*!< in: number of array cells */
+	ulint	n,	/*!< in: number of array cells */
+	obPool	*ob_pool)
 {
 	hash_cell_t*	array;
 	ulint		prime;
@@ -274,11 +275,19 @@ hash_create(
 
 	prime = ut_find_prime(n);
 
-	table = static_cast<hash_table_t*>(
-		ut_malloc_nokey(sizeof(hash_table_t)));
+	if (ob_pool) {
+		table = static_cast<hash_table_t*>(
+			obPoolAllocate(ob_pool, sizeof(hash_table_t)));
 
-	array = static_cast<hash_cell_t*>(
-		ut_malloc_nokey(sizeof(hash_cell_t) * prime));
+		array = static_cast<hash_cell_t*>(
+			obPoolAllocate(ob_pool, sizeof(hash_cell_t) * prime));
+	} else {
+		table = static_cast<hash_table_t*>(
+			ut_malloc_nokey(sizeof(hash_table_t)));
+
+		array = static_cast<hash_cell_t*>(
+			ut_malloc_nokey(sizeof(hash_cell_t) * prime));
+	}
 
 	/* The default type of hash_table is HASH_TABLE_SYNC_NONE i.e.:
 	the caller is responsible for access control to the table. */
@@ -307,12 +316,18 @@ Frees a hash table. */
 void
 hash_table_free(
 /*============*/
-	hash_table_t*	table)	/*!< in, own: hash table */
+	hash_table_t*	table,	/*!< in, own: hash table */
+	obPool*		ob_pool)
 {
 	ut_ad(table->magic_n == HASH_TABLE_MAGIC_N);
 
-	ut_free(table->array);
-	ut_free(table);
+	if (ob_pool) {
+		obPoolDeallocate(ob_pool, table->array, 1);
+		obPoolDeallocate(ob_pool, table, 1);
+	} else {
+		ut_free(table->array);
+		ut_free(table);
+	}
 }
 
 #ifndef UNIV_HOTBACKUP

@@ -61,6 +61,8 @@ Created 3/26/1996 Heikki Tuuri
 #include "ut0pool.h"
 #include "ut0vec.h"
 
+#include "orbit.h"
+
 #include <set>
 #include <new>
 
@@ -220,6 +222,9 @@ trx_init(
 	++trx->version;
 }
 
+// Forward declaration.
+extern obPool *trx_ob_pool;
+
 /** For managing the life-cycle of the trx_t instance that we get
 from the pool. */
 struct TrxFactory {
@@ -307,7 +312,8 @@ struct TrxFactory {
 			/* See lock_trx_alloc_locks() why we only free
 			the first element. */
 
-			ut_free(trx->lock.rec_pool[0]);
+			obPoolDeallocate(trx_ob_pool, trx->lock.rec_pool[0], 1);
+			// ut_free(trx->lock.rec_pool[0]);
 		}
 
 		if (!trx->lock.table_pool.empty()) {
@@ -315,7 +321,8 @@ struct TrxFactory {
 			/* See lock_trx_alloc_locks() why we only free
 			the first element. */
 
-			ut_free(trx->lock.table_pool[0]);
+			obPoolDeallocate(trx_ob_pool, trx->lock.table_pool[0], 1);
+			// ut_free(trx->lock.table_pool[0]);
 		}
 
 		trx->lock.rec_pool.~lock_pool_t();
@@ -427,11 +434,14 @@ static trx_pools_t* trx_pools;
 /** Size of on trx_t pool in bytes. */
 static const ulint MAX_TRX_BLOCK_SIZE = 1024 * 1024 * 4;
 
+// default 4M * 16
+obPool *trx_ob_pool = obPoolCreate(MAX_TRX_BLOCK_SIZE * 16);
+
 /** Create the trx_t pool */
 void
 trx_pool_init()
 {
-	trx_pools = UT_NEW_NOKEY(trx_pools_t(MAX_TRX_BLOCK_SIZE));
+	trx_pools = UT_NEW_NOKEY(trx_pools_t(MAX_TRX_BLOCK_SIZE, trx_ob_pool));
 
 	ut_a(trx_pools != 0);
 }

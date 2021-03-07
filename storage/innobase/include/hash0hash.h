@@ -40,6 +40,8 @@ Created 5/20/1997 Heikki Tuuri
 # include "sync0rw.h"
 #endif /* !UNIV_HOTBACKUP */
 
+#include "orbit.h"
+
 struct hash_table_t;
 struct hash_cell_t;
 
@@ -67,7 +69,8 @@ of cells is chosen to be a prime number slightly bigger than n.
 hash_table_t*
 hash_create(
 /*========*/
-	ulint	n);	/*!< in: number of array cells */
+	ulint	n,	/*!< in: number of array cells */
+	obPool	*ob_pool = NULL);
 #ifndef UNIV_HOTBACKUP
 /*************************************************************//**
 Creates a sync object array array to protect a hash table.
@@ -89,7 +92,8 @@ Frees a hash table. */
 void
 hash_table_free(
 /*============*/
-	hash_table_t*	table);	/*!< in, own: hash table */
+	hash_table_t*	table,	/*!< in, own: hash table */
+	obPool*		ob_pool = NULL);
 /**************************************************************//**
 Calculates the hash value from a folded value.
 @return hashed value */

@@ -31,6 +31,9 @@ Object pool.
 Created 2012-Feb-26 Sunny Bains
 ***********************************************************************/
 
+/* RK: This file seems to be only used by trx0trx.cc, so for now we can just
+ * add our orbit support here. */
+
 #ifndef ut0pool_h
 #define ut0pool_h
 
@@ -39,6 +42,8 @@ Created 2012-Feb-26 Sunny Bains
 #include <functional>
 
 #include "ut0new.h"
+
+#include "orbit.h"
 
 /** Allocate the memory for the object in blocks. We keep the objects sorted
 on pointer so that they are closer together in case they have to be iterated
@@ -57,12 +62,13 @@ struct Pool {
 
 	/** Constructor
 	@param size size of the memory block */
-	Pool(size_t size)
+	Pool(size_t size, obPool *ob_pool)
 		:
 		m_end(),
 		m_start(),
 		m_size(size),
-		m_last()
+		m_last(),
+		m_ob_pool(ob_pool)
 	{
 		ut_a(size >= sizeof(Element));
 
@@ -70,7 +76,12 @@ struct Pool {
 
 		ut_a(m_start == 0);
 
-		m_start = reinterpret_cast<Element*>(ut_zalloc_nokey(m_size));
+		if (m_ob_pool)
+			m_start = reinterpret_cast<Element*>(
+				obPoolAllocate(m_ob_pool, m_size));
+		else
+			m_start = reinterpret_cast<Element*>(
+				ut_zalloc_nokey(m_size));
 
 		m_last = m_start;
 
@@ -97,7 +108,10 @@ struct Pool {
 			Factory::destroy(&elem->m_type);
 		}
 
-		ut_free(m_start);
+		if (m_ob_pool)
+			obPoolDeallocate(m_ob_pool, m_start, m_size);
+		else
+			ut_free(m_start);
 		m_end = m_last = m_start = 0;
 		m_size = 0;
 	}
@@ -207,6 +221,8 @@ private:
 
 	/** Lock strategy to use */
 	LockStrategy		m_lock_strategy;
+
+	obPool*			m_ob_pool;
 };
 
 template <typename Pool, typename LockStrategy>
@@ -215,9 +231,10 @@ struct PoolManager {
 	typedef Pool PoolType;
 	typedef typename PoolType::value_type value_type;
 
-	PoolManager(size_t size)
+	PoolManager(size_t size, obPool *ob_pool)
 		:
-		m_size(size)
+		m_size(size),
+		m_ob_pool(ob_pool)
 	{
 		create();
 	}
@@ -307,7 +324,7 @@ private:
 
 			ut_ad(n_pools == m_pools.size());
 
-			pool = UT_NEW_NOKEY(PoolType(m_size));
+			pool = UT_NEW_NOKEY(PoolType(m_size, m_ob_pool));
 
 			if (pool != NULL) {
 
@@ -369,6 +386,8 @@ private:
 
 	/** Lock strategy to use */
 	LockStrategy		m_lock_strategy;
+
+	obPool*		m_ob_pool;
 };
 
 #endif /* ut0pool_h */
