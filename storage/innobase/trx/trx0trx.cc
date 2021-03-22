@@ -223,7 +223,7 @@ trx_init(
 }
 
 // Forward declaration.
-extern obPool *trx_ob_pool;
+extern orbit_pool *trx_ob_pool;
 
 /** For managing the life-cycle of the trx_t instance that we get
 from the pool. */
@@ -290,6 +290,8 @@ struct TrxFactory {
 
 		ut_a(trx->dict_operation_lock_mode == 0);
 
+		/* TODO: we need to either modify buffer pool to reuse this
+		 * heap, or use a standalone heap using orbit pool. */
 		if (trx->lock.lock_heap != NULL) {
 			mem_heap_free(trx->lock.lock_heap);
 			trx->lock.lock_heap = NULL;
@@ -312,7 +314,7 @@ struct TrxFactory {
 			/* See lock_trx_alloc_locks() why we only free
 			the first element. */
 
-			obPoolDeallocate(trx_ob_pool, trx->lock.rec_pool[0], 1);
+			orbit_pool_free(trx_ob_pool, trx->lock.rec_pool[0], 1);
 			// ut_free(trx->lock.rec_pool[0]);
 		}
 
@@ -321,7 +323,7 @@ struct TrxFactory {
 			/* See lock_trx_alloc_locks() why we only free
 			the first element. */
 
-			obPoolDeallocate(trx_ob_pool, trx->lock.table_pool[0], 1);
+			orbit_pool_free(trx_ob_pool, trx->lock.table_pool[0], 1);
 			// ut_free(trx->lock.table_pool[0]);
 		}
 
@@ -435,7 +437,7 @@ static trx_pools_t* trx_pools;
 static const ulint MAX_TRX_BLOCK_SIZE = 1024 * 1024 * 4;
 
 // default 4M * 16
-obPool *trx_ob_pool = obPoolCreate(MAX_TRX_BLOCK_SIZE * 16);
+orbit_pool *trx_ob_pool = orbit_pool_create(MAX_TRX_BLOCK_SIZE * 16);
 
 /** Create the trx_t pool */
 void

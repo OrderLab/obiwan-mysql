@@ -267,7 +267,7 @@ hash_table_t*
 hash_create(
 /*========*/
 	ulint	n,	/*!< in: number of array cells */
-	obPool	*ob_pool)
+	orbit_pool	*ob_pool)
 {
 	hash_cell_t*	array;
 	ulint		prime;
@@ -277,10 +277,10 @@ hash_create(
 
 	if (ob_pool) {
 		table = static_cast<hash_table_t*>(
-			obPoolAllocate(ob_pool, sizeof(hash_table_t)));
+			orbit_pool_alloc(ob_pool, sizeof(hash_table_t)));
 
 		array = static_cast<hash_cell_t*>(
-			obPoolAllocate(ob_pool, sizeof(hash_cell_t) * prime));
+			orbit_pool_alloc(ob_pool, sizeof(hash_cell_t) * prime));
 	} else {
 		table = static_cast<hash_table_t*>(
 			ut_malloc_nokey(sizeof(hash_table_t)));
@@ -317,13 +317,13 @@ void
 hash_table_free(
 /*============*/
 	hash_table_t*	table,	/*!< in, own: hash table */
-	obPool*		ob_pool)
+	orbit_pool*	ob_pool)
 {
 	ut_ad(table->magic_n == HASH_TABLE_MAGIC_N);
 
 	if (ob_pool) {
-		obPoolDeallocate(ob_pool, table->array, 1);
-		obPoolDeallocate(ob_pool, table, 1);
+		orbit_pool_free(ob_pool, table->array, 1);
+		orbit_pool_free(ob_pool, table, 1);
 	} else {
 		ut_free(table->array);
 		ut_free(table);

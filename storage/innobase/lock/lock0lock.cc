@@ -61,6 +61,8 @@ Created 5/7/1996 Heikki Tuuri
 
 #include <set>
 
+#define obprintf if(0)fprintf
+
 #define orbit_update(scratch, lval, rval) \
 	do { \
 		(lval) = (rval); \
@@ -317,6 +319,10 @@ lock_rec_validate_page(
 /* The lock system */
 lock_sys_t*	lock_sys	= NULL;
 
+const char* holder_file;
+int holder_line;
+int holder_signal;
+
 /** We store info on the latest deadlock error to this buffer. InnoDB
 Monitor will then fetch it and print */
 bool	lock_deadlock_found = false;
@@ -453,7 +459,7 @@ lock_sec_rec_cons_read_sees(
 }
 
 // TODO: one pool per type of object
-extern obPool *trx_ob_pool;
+extern orbit_pool *trx_ob_pool;
 
 /*********************************************************************//**
 Creates the lock system at database start. */
@@ -466,7 +472,8 @@ lock_sys_create(
 
 	lock_sys_sz = sizeof(*lock_sys) + OS_THREAD_MAX_N * sizeof(srv_slot_t);
 
-	lock_sys = static_cast<lock_sys_t*>(obPoolAllocate(trx_ob_pool, lock_sys_sz));
+	lock_sys = static_cast<lock_sys_t*>(
+			orbit_pool_alloc(trx_ob_pool, lock_sys_sz));
 	// lock_sys = static_cast<lock_sys_t*>(ut_zalloc_nokey(lock_sys_sz));
 
 	void*	ptr = &lock_sys[1];
@@ -510,28 +517,27 @@ lock_sys_resize(
 	ulint	n_cells)
 {
 	hash_table_t*	old_hash;
-	ib::error() << "Orbit does not yet support resize.";
-	abort();
+	ib::warn() << "Resizing lock sys with orbit.";
 
 	lock_mutex_enter();
 
 	old_hash = lock_sys->rec_hash;
-	lock_sys->rec_hash = hash_create(n_cells);
+	lock_sys->rec_hash = hash_create(n_cells, trx_ob_pool);
 	HASH_MIGRATE(old_hash, lock_sys->rec_hash, lock_t, hash,
 		     lock_rec_lock_fold);
-	hash_table_free(old_hash);
+	hash_table_free(old_hash, trx_ob_pool);
 
 	old_hash = lock_sys->prdt_hash;
-	lock_sys->prdt_hash = hash_create(n_cells);
+	lock_sys->prdt_hash = hash_create(n_cells, trx_ob_pool);
 	HASH_MIGRATE(old_hash, lock_sys->prdt_hash, lock_t, hash,
 		     lock_rec_lock_fold);
-	hash_table_free(old_hash);
+	hash_table_free(old_hash, trx_ob_pool);
 
 	old_hash = lock_sys->prdt_page_hash;
-	lock_sys->prdt_page_hash = hash_create(n_cells);
+	lock_sys->prdt_page_hash = hash_create(n_cells, trx_ob_pool);
 	HASH_MIGRATE(old_hash, lock_sys->prdt_page_hash, lock_t, hash,
 		     lock_rec_lock_fold);
-	hash_table_free(old_hash);
+	hash_table_free(old_hash, trx_ob_pool);
 
 	/* need to update block->lock_hash_val */
 	for (ulint i = 0; i < srv_buf_pool_instances; ++i) {
@@ -589,7 +595,7 @@ lock_sys_close(void)
 		}
 	}
 
-	obPoolDeallocate(trx_ob_pool, lock_sys, 1);
+	orbit_pool_free(trx_ob_pool, lock_sys, 1);
 	// ut_free(lock_sys);
 
 	lock_sys = NULL;
@@ -1491,12 +1497,16 @@ RecLock::lock_alloc(
 	if (trx->lock.rec_cached >= trx->lock.rec_pool.size()
 	    || sizeof(*lock) + size > REC_LOCK_SIZE) {
 
+		/* TODO: how can we use heap with internally buffer pool? */
 		ulint		n_bytes = size + sizeof(*lock);
-		mem_heap_t*	heap = trx->lock.lock_heap;
-
-		ib::error() << "Orbit currently does not support heap.";
-		abort();
+		/* mem_heap_t*	heap = trx->lock.lock_heap;
 		lock = reinterpret_cast<lock_t*>(mem_heap_alloc(heap, n_bytes));
+		*/
+
+		obprintf(stderr, "Orbit allocating rec lock from orbit pool.\n");
+		lock = reinterpret_cast<lock_t*>(
+			orbit_pool_alloc(trx_ob_pool, n_bytes));
+		obprintf(stderr, "Orbit allocated rec lock %p from pool\n", lock);
 	} else {
 
 		lock = trx->lock.rec_pool[trx->lock.rec_cached];
@@ -1540,7 +1550,7 @@ RecLock::lock_alloc(
 
 	MONITOR_INC(MONITOR_RECLOCK_CREATED);
 
-	fprintf(stderr, "lock_alloc returns %p\n", lock);
+	obprintf(stderr, "lock_alloc returns %p\n", lock);
 
 	return(lock);
 }
@@ -3761,8 +3771,13 @@ lock_table_create(
 		lock = trx->lock.table_pool[trx->lock.table_cached++];
 	} else {
 
-		lock = static_cast<lock_t*>(
-			mem_heap_alloc(trx->lock.lock_heap, sizeof(*lock)));
+		obprintf(stderr, "Orbit allocating table lock from orbit pool.\n");
+		lock = reinterpret_cast<lock_t*>(
+			orbit_pool_alloc(trx_ob_pool, sizeof(*lock)));
+		obprintf(stderr, "Orbit allocated table lock %p from pool\n", lock);
+
+		/* lock = static_cast<lock_t*>(
+			mem_heap_alloc(trx->lock.lock_heap, sizeof(*lock))); */
 
 	}
 
@@ -6866,6 +6881,22 @@ unsigned long lock_rec_dequeue_from_page_orbit(
 	return 0;
 }
 
+unsigned long lock_table_dequeue_orbit(
+	size_t argc, unsigned long argv[])
+{
+	assert(argc == 1);
+	lock_table_dequeue((lock_t *)argv[0]);
+	return 0;
+}
+
+unsigned long lock_release_autoinc_locks_orbit(
+	size_t argc, unsigned long argv[])
+{
+	assert(argc == 1);
+	lock_release_autoinc_locks((trx_t *)argv[0]);
+	return 0;
+}
+
 void
 lock_cancel_waiting_and_release_orbit(
 /*============================*/
@@ -6889,16 +6920,23 @@ lock_cancel_waiting_and_release_orbit(
 			lock_rec_dequeue_from_page_orbit,
 			1, args);
 	} else {
-		ib::error() << "Orbit does not support rollback table lock.";
-		abort();
 		ut_ad(lock_get_type_low(lock) & LOCK_TABLE);
 
 		if (lock->trx->autoinc_locks != NULL) {
 			/* Release the transaction's AUTOINC locks. */
-			lock_release_autoinc_locks(lock->trx);
+
+			// lock_release_autoinc_locks(lock->trx);
+
+			unsigned long args[] = {(unsigned long)lock->trx};
+			orbit_scratch_push_operation(scratch,
+				lock_release_autoinc_locks_orbit,
+				1, args);
 		}
 
-		lock_table_dequeue(lock);
+		// lock_table_dequeue(lock);
+		orbit_scratch_push_operation(scratch,
+			lock_table_dequeue_orbit,
+			1, args);
 	}
 
 	/* Reset the wait flag and the back pointer to lock in trx. */
@@ -7432,7 +7470,7 @@ DeadlockChecker::get_next_lock(const lock_t* lock, ulint heap_no) const
 	ut_ad(lock == NULL
 	      || lock_get_type_low(lock) == lock_get_type_low(m_wait_lock));
 
-	fprintf(stderr, "in checker next_lock is %p is rec: %d\n",
+	obprintf(stderr, "in checker next_lock is %p is rec: %d\n",
 		lock, lock_get_type_low(lock) == LOCK_REC);
 	return(lock);
 }
@@ -7500,7 +7538,7 @@ DeadlockChecker::get_first_lock(ulint* heap_no) const
 	/* Check that the lock type doesn't change. */
 	ut_ad(lock_get_type_low(lock) == lock_get_type_low(m_wait_lock));
 
-	fprintf(stderr, "in checker first_lock is %p is rec: %d\n",
+	obprintf(stderr, "in checker first_lock is %p is rec: %d\n",
 		lock, lock_get_type_low(lock) == LOCK_REC);
 	return(lock);
 }
@@ -7766,6 +7804,7 @@ DeadlockChecker::trx_rollback(orbit_scratch *scratch)
 
 orbit_scratch dld_scratch;
 int scratch_init = orbit_scratch_create(&dld_scratch, 1024 * 1024);
+bool first_scratch = true;
 
 const trx_t*
 DeadlockChecker::check_and_resolve_inner(const lock_t* lock, trx_t* trx)
@@ -7796,6 +7835,12 @@ DeadlockChecker::check_and_resolve_inner(const lock_t* lock, trx_t* trx)
 		} else if (victim_trx != NULL && victim_trx != trx) {
 			ut_ad(victim_trx == checker.m_wait_lock->trx);
 
+			/* FIXME: fix this hack */
+			if (first_scratch)
+				first_scratch = false;
+			else
+				orbit_scratch_create(&dld_scratch, 1024 * 1024);
+
 			fprintf(stderr, "in checker before rollback\n");
 			checker.trx_rollback(&dld_scratch);
 
@@ -7814,7 +7859,7 @@ DeadlockChecker::check_and_resolve_inner(const lock_t* lock, trx_t* trx)
 
 	} while (victim_trx != NULL && victim_trx != trx);
 
-	fprintf(stderr, "in checker loop ended\n");
+	obprintf(stderr, "in checker loop ended\n");
 
 	/* TODO: fix the return value, and/or modify rollback to allow
 	 * rolling back the current trx. */
@@ -7825,11 +7870,9 @@ unsigned long
 DeadlockChecker::check_and_resolve_inner_orbit(void *aux)
 {
 	orbit_args *args = (orbit_args*)aux;
-	fprintf(stderr, "in checker args = %p\n", args);
+	obprintf(stderr, "in checker args = %p\n", args);
 	return (unsigned long)check_and_resolve_inner(args->lock, args->trx);
 }
-
-extern obPool *trx_ob_pool;
 
 /** Checks if a joining lock request results in a deadlock. If a deadlock is
 found this function will resolve the deadlock by choosing a victim transaction
@@ -7858,6 +7901,8 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 		return(NULL);
 	}
 
+	// return NULL;
+
 	/*  Release the mutex to obey the latching order.
 	This is safe, because DeadlockChecker::check_and_resolve()
 	is invoked when a lock wait is enqueued for the currently
@@ -7870,41 +7915,42 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 
 	const trx_t*	victim_trx;
 
-	static obModule *dld_ob = obCreate("DL CK", check_and_resolve_inner_orbit);
-	/* FIXME: notification mechanism */
-	static int global_seqid = 0;
-	int seqid = ++global_seqid;
+	static orbit_module *dld_ob = orbit_create("DL CK",
+						check_and_resolve_inner_orbit);
 
-	if (0) {
-		victim_trx = check_and_resolve_inner(lock, trx);
-	} else {
-		orbit_args *args = (orbit_args *)obPoolAllocate(
-					trx_ob_pool, sizeof(*args));
-		args->lock = lock;
-		args->trx = trx;
-		fprintf(stderr, "before checker args = %p\n", args);
+	// victim_trx = check_and_resolve_inner(lock, trx);
+	orbit_args *args = (orbit_args *)orbit_pool_alloc(
+				trx_ob_pool, sizeof(*args));
+	args->lock = lock;
+	args->trx = trx;
+	obprintf(stderr, "before checker args = %p\n", args);
 
-		obTask task;
-		int ret = obCallAsync(dld_ob, trx_ob_pool, args, &task);
-		ib::error() << "obCallAsync returns " << ret;
-		if (ret != 0) abort();
+	orbit_task task;
+	int ret = orbit_call_async(dld_ob, 0, 1, &trx_ob_pool, args, &task);
+	obprintf(stderr, "orbit_call_async returns %d\n", ret);
+	if (ret != 0) abort();
 
-		ib::error() << "seqid is " << seqid;
-		if ((seqid & 1) == 0) { // even numbers
-			orbit_scratch result;
-			printf("seq2 before recvv\n");
-			ret = orbit_recvv(&result, &task);
-			ib::error() << "orbit_recvv returns " << ret;
-			if (ret != 0) abort();
-			orbit_apply(&result);
+	do {
+		union orbit_result result;
+		obprintf(stderr, "before recvv\n");
+		ret = orbit_recvv(&result, &task);
+		if (ret == -1) {
+			int err = errno;
+			fprintf(stderr, "get error: %s\n", strerror(err));
+			abort();
 		}
+		obprintf(stderr, "orbit_recvv returns %d\n", ret);
 
-		// FIXME: we still need this
-		victim_trx = NULL;
+		if (ret == 0) {
+			victim_trx = (trx_t *)result.retval;
+			break;
+		}
+		orbit_apply(&result.scratch);
+	} while (true);
 
-		fprintf(stderr, "after checker result = %p\n", victim_trx);
-		obPoolDeallocate(trx_ob_pool, args, sizeof(*args));
-	}
+	obprintf(stderr, "after checker result = %p\n", victim_trx);
+	orbit_pool_free(trx_ob_pool, args, sizeof(*args));
+	// end of check_and_resolve_inner equivalent call
 
 	/* If the joining transaction was selected as the victim. */
 	if (victim_trx != NULL) {
@@ -7927,7 +7973,7 @@ lock_trx_alloc_locks(trx_t* trx)
 {
 	ulint	sz = REC_LOCK_SIZE * REC_LOCK_CACHE;
 	// byte*	ptr = reinterpret_cast<byte*>(ut_malloc_nokey(sz));
-	byte*	ptr = reinterpret_cast<byte*>(obPoolAllocate(trx_ob_pool, sz));
+	byte*	ptr = reinterpret_cast<byte*>(orbit_pool_alloc(trx_ob_pool, sz));
 
 	/* We allocate one big chunk and then distribute it among
 	the rest of the elements. The allocated chunk pointer is always
@@ -7940,7 +7986,7 @@ lock_trx_alloc_locks(trx_t* trx)
 
 	sz = TABLE_LOCK_SIZE * TABLE_LOCK_CACHE;
 	// ptr = reinterpret_cast<byte*>(ut_malloc_nokey(sz));
-	ptr = reinterpret_cast<byte*>(obPoolAllocate(trx_ob_pool, sz));
+	ptr = reinterpret_cast<byte*>(orbit_pool_alloc(trx_ob_pool, sz));
 
 	for (ulint i = 0; i < TABLE_LOCK_CACHE; ++i, ptr += TABLE_LOCK_SIZE) {
 		trx->lock.table_pool.push_back(

@@ -1005,6 +1005,10 @@ struct lock_op_t{
 
 typedef ib_mutex_t LockMutex;
 
+extern const char* holder_file;
+extern int holder_line;
+extern int holder_signal;
+
 /** The lock system struct */
 struct lock_sys_t{
 	char		pad1[CACHE_LINE_SIZE];	/*!< padding to prevent other
@@ -1116,10 +1120,14 @@ extern lock_sys_t*	lock_sys;
 /** Acquire the lock_sys->mutex. */
 #define lock_mutex_enter() do {			\
 	mutex_enter(&lock_sys->mutex);		\
+	holder_file = __FILE__;			\
+	holder_line = __LINE__;			\
 } while (0)
 
 /** Release the lock_sys->mutex. */
 #define lock_mutex_exit() do {			\
+	holder_file = __FILE__;			\
+	holder_line = __LINE__;			\
 	lock_sys->mutex.exit();			\
 } while (0)
 

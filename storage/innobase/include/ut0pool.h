@@ -62,7 +62,7 @@ struct Pool {
 
 	/** Constructor
 	@param size size of the memory block */
-	Pool(size_t size, obPool *ob_pool)
+	Pool(size_t size, orbit_pool *ob_pool)
 		:
 		m_end(),
 		m_start(),
@@ -78,7 +78,7 @@ struct Pool {
 
 		if (m_ob_pool)
 			m_start = reinterpret_cast<Element*>(
-				obPoolAllocate(m_ob_pool, m_size));
+				orbit_pool_alloc(m_ob_pool, m_size));
 		else
 			m_start = reinterpret_cast<Element*>(
 				ut_zalloc_nokey(m_size));
@@ -109,7 +109,7 @@ struct Pool {
 		}
 
 		if (m_ob_pool)
-			obPoolDeallocate(m_ob_pool, m_start, m_size);
+			orbit_pool_free(m_ob_pool, m_start, m_size);
 		else
 			ut_free(m_start);
 		m_end = m_last = m_start = 0;
@@ -222,7 +222,7 @@ private:
 	/** Lock strategy to use */
 	LockStrategy		m_lock_strategy;
 
-	obPool*			m_ob_pool;
+	orbit_pool*		m_ob_pool;
 };
 
 template <typename Pool, typename LockStrategy>
@@ -231,7 +231,7 @@ struct PoolManager {
 	typedef Pool PoolType;
 	typedef typename PoolType::value_type value_type;
 
-	PoolManager(size_t size, obPool *ob_pool)
+	PoolManager(size_t size, orbit_pool *ob_pool)
 		:
 		m_size(size),
 		m_ob_pool(ob_pool)
@@ -387,7 +387,7 @@ private:
 	/** Lock strategy to use */
 	LockStrategy		m_lock_strategy;
 
-	obPool*		m_ob_pool;
+	orbit_pool*		m_ob_pool;
 };
 
 #endif /* ut0pool_h */

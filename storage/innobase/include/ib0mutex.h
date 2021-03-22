@@ -612,6 +612,11 @@ private:
 	lock_word_t		m_lock_word;
 };
 
+extern int holder_signal;
+struct lock_sys_t;
+extern lock_sys_t * lock_sys;
+
+
 template <template <typename> class Policy = NoPolicy>
 struct TTASEventMutex {
 
@@ -695,7 +700,12 @@ struct TTASEventMutex {
 		tas_unlock();
 
 		if (m_waiters != 0) {
+			if ((char*)this == (char*)lock_sys + CACHE_LINE_SIZE)
+				holder_signal = 3;
 			signal();
+		} else {
+			if ((char*)this == (char*)lock_sys + CACHE_LINE_SIZE)
+				holder_signal = 5;
 		}
 	}
 

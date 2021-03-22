@@ -502,6 +502,8 @@ sync_array_cell_print(
 
 	type = cell->request_type;
 
+	fprintf(stderr, "lock sys at %s:%d\n", holder_file, holder_line);
+
 	fprintf(file,
 		"--Thread %lu has waited at %s line %lu"
 		" for " UINT64PF "  seconds the semaphore:\n",

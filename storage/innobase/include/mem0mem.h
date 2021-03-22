@@ -64,12 +64,14 @@ buffer pool; the latter method is used for very big heaps */
 					and if it's NULL, the memory
 					allocation functions can return
 					NULL. */
+// #define MEM_HEAP_ORBIT		4	/* Allocate from orbit */
 
 /** Different type of heaps in terms of which datastructure is using them */
 #define MEM_HEAP_FOR_BTR_SEARCH		(MEM_HEAP_BTR_SEARCH | MEM_HEAP_BUFFER)
 #define MEM_HEAP_FOR_PAGE_HASH		(MEM_HEAP_DYNAMIC)
 #define MEM_HEAP_FOR_RECV_SYS		(MEM_HEAP_BUFFER)
 #define MEM_HEAP_FOR_LOCK_HEAP		(MEM_HEAP_BUFFER)
+// #define MEM_HEAP_FOR_LOCK_HEAP		(MEM_HEAP_ORBIT)
 
 /** The following start size is used for the first block in the memory heap if
 the size is not specified, i.e., 0 is given as the parameter in the call of
@@ -409,6 +411,8 @@ struct mem_block_info_t {
 			/* if this block has been allocated from the buffer
 			pool, this contains the buf_block_t handle;
 			otherwise, this is NULL */
+	// struct orbit_pool	*ob_pool;
+			/* Currently may use this to replace buffer pool for trx */
 #endif /* !UNIV_HOTBACKUP */
 };
 
