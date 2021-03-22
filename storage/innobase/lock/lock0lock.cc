@@ -59,6 +59,8 @@ Created 5/7/1996 Heikki Tuuri
 
 #include "orbit.h"
 
+#include <sys/wait.h>
+
 #include <set>
 
 #define obprintf if(0)fprintf
@@ -322,6 +324,9 @@ lock_sys_t*	lock_sys	= NULL;
 const char* holder_file;
 int holder_line;
 int holder_signal;
+const char* wait_holder_file;
+int wait_holder_line;
+int wait_holder_signal;
 
 /** We store info on the latest deadlock error to this buffer. InnoDB
 Monitor will then fetch it and print */
@@ -7915,6 +7920,20 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 
 	const trx_t*	victim_trx;
 
+#if 0
+
+	int child = fork();
+
+	if (child == 0) {
+		victim_trx = check_and_resolve_inner(lock, trx);
+		exit(0);
+	} else {
+		waitpid(child, NULL, 0);
+		victim_trx = NULL;
+	}
+
+#else
+
 	static orbit_module *dld_ob = orbit_create("DL CK",
 						check_and_resolve_inner_orbit);
 
@@ -7951,6 +7970,8 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 	obprintf(stderr, "after checker result = %p\n", victim_trx);
 	orbit_pool_free(trx_ob_pool, args, sizeof(*args));
 	// end of check_and_resolve_inner equivalent call
+
+#endif
 
 	/* If the joining transaction was selected as the victim. */
 	if (victim_trx != NULL) {

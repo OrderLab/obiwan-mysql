@@ -370,9 +370,15 @@ private:
 		do {
 			++n_waits;
 
-			syscall(SYS_futex, &m_lock_word,
+			int ret = syscall(SYS_futex, &m_lock_word,
 				FUTEX_WAIT_PRIVATE, MUTEX_STATE_WAITERS,
 				0, 0, 0);
+
+			if (ret == -1) {
+				int err = errno;
+				fprintf(stderr, "wait() errno=%d: %s\n", err, strerror(err));
+				abort();
+			}
 
 			// Since we are retrying the operation the return
 			// value doesn't matter.
@@ -385,8 +391,13 @@ private:
 	/** Wakeup a waiting thread */
 	void signal() UNIV_NOTHROW
 	{
-		syscall(SYS_futex, &m_lock_word, FUTEX_WAKE_PRIVATE, 1, 0, 0,
+		int ret = syscall(SYS_futex, &m_lock_word, FUTEX_WAKE_PRIVATE, 1, 0, 0,
 			0);
+		if (ret == -1) {
+			int err = errno;
+			fprintf(stderr, "signal() errno=%d: %s\n", err, strerror(err));
+			abort();
+		}
 	}
 
 	/** Poll waiting for mutex to be unlocked.
@@ -699,7 +710,8 @@ struct TTASEventMutex {
 
 		tas_unlock();
 
-		if (m_waiters != 0) {
+		// if (m_waiters != 0) {
+		if (waiters() != 0) {
 			if ((char*)this == (char*)lock_sys + CACHE_LINE_SIZE)
 				holder_signal = 3;
 			signal();
@@ -745,7 +757,9 @@ struct TTASEventMutex {
 	bool is_locked() const
 		UNIV_NOTHROW
 	{
-		return(m_lock_word != MUTEX_STATE_UNLOCKED);
+		return(__atomic_load_n(&m_lock_word, __ATOMIC_SEQ_CST)
+				!= MUTEX_STATE_UNLOCKED);
+		// return(m_lock_word != MUTEX_STATE_UNLOCKED);
 	}
 
 #ifdef UNIV_DEBUG
@@ -882,21 +896,24 @@ private:
 	/** @return the value of the m_waiters flag */
 	lock_word_t waiters() UNIV_NOTHROW
 	{
-		return(m_waiters);
+		// return(m_waiters);
+		return __atomic_load_n(&m_waiters, __ATOMIC_SEQ_CST);
 	}
 
 	/** Note that there are threads waiting on the mutex */
 	void set_waiters() UNIV_NOTHROW
 	{
-		m_waiters = 1;
-		os_wmb;
+		__atomic_store_n(&m_waiters, 1, __ATOMIC_SEQ_CST);
+		// m_waiters = 1;
+		// os_wmb;
 	}
 
 	/** Note that there are no threads waiting on the mutex */
 	void clear_waiters() UNIV_NOTHROW
 	{
-		m_waiters = 0;
-		os_wmb;
+		__atomic_store_n(&m_waiters, 0, __ATOMIC_SEQ_CST);
+		// m_waiters = 0;
+		// os_wmb;
 	}
 
 	/** Try and acquire the lock using TestAndSet.

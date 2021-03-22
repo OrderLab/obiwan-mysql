@@ -1008,6 +1008,9 @@ typedef ib_mutex_t LockMutex;
 extern const char* holder_file;
 extern int holder_line;
 extern int holder_signal;
+extern const char* wait_holder_file;
+extern int wait_holder_line;
+extern int wait_holder_signal;
 
 /** The lock system struct */
 struct lock_sys_t{
@@ -1117,16 +1120,27 @@ extern lock_sys_t*	lock_sys;
 /** Test if lock_sys->mutex is owned. */
 #define lock_mutex_own() (lock_sys->mutex.is_owned())
 
+#define strxxx(s) strxxx2(s)
+#define strxxx2(s) #s
+
 /** Acquire the lock_sys->mutex. */
 #define lock_mutex_enter() do {			\
 	mutex_enter(&lock_sys->mutex);		\
 	holder_file = __FILE__;			\
+	if (__LINE__ == holder_line) {		\
+		fprintf(stderr, "lock line not match " strxxx(__LINE__) "\n");	\
+		abort();			\
+	}					\
 	holder_line = __LINE__;			\
 } while (0)
 
 /** Release the lock_sys->mutex. */
 #define lock_mutex_exit() do {			\
 	holder_file = __FILE__;			\
+	if (__LINE__ == holder_line) {		\
+		fprintf(stderr, "unlock line not match " strxxx(__LINE__) "\n");	\
+		abort();			\
+	}					\
 	holder_line = __LINE__;			\
 	lock_sys->mutex.exit();			\
 } while (0)
@@ -1137,10 +1151,22 @@ extern lock_sys_t*	lock_sys;
 /** Acquire the lock_sys->wait_mutex. */
 #define lock_wait_mutex_enter() do {		\
 	mutex_enter(&lock_sys->wait_mutex);	\
+	wait_holder_file = __FILE__;			\
+	if (__LINE__ == wait_holder_line) {		\
+		fprintf(stderr, "wait lock line not match " strxxx(__LINE__) "\n");	\
+		abort();			\
+	}					\
+	wait_holder_line = __LINE__;			\
 } while (0)
 
 /** Release the lock_sys->wait_mutex. */
 #define lock_wait_mutex_exit() do {		\
+	wait_holder_file = __FILE__;			\
+	if (__LINE__ == wait_holder_line) {		\
+		fprintf(stderr, "wait unlock line not match " strxxx(__LINE__) "\n");	\
+		abort();			\
+	}					\
+	wait_holder_line = __LINE__;			\
 	lock_sys->wait_mutex.exit();		\
 } while (0)
 

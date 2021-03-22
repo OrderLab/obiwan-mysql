@@ -163,7 +163,8 @@ os_atomic_test_and_set(
 #if defined(__powerpc__) || defined(__aarch64__)
 	__atomic_exchange(ptr, &new_val,  &ret, __ATOMIC_SEQ_CST);
 #else
-	__atomic_exchange(ptr, &new_val,  &ret, __ATOMIC_RELEASE);
+	__atomic_exchange(ptr, &new_val,  &ret, __ATOMIC_SEQ_CST);
+	// __atomic_exchange(ptr, &new_val,  &ret, __ATOMIC_RELEASE);
 #endif
 
 	return(ret);
