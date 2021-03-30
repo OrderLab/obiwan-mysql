@@ -58,6 +58,8 @@ Created 5/7/1996 Heikki Tuuri
 #include "pars0pars.h"
 
 #include "orbit.h"
+#include <pthread.h>
+#include <semaphore.h>
 
 #include <set>
 
@@ -1776,6 +1778,10 @@ RecLock::add_to_waitq(const lock_t* wait_for, const lock_prdt_t* prdt)
 
 	DEBUG_SYNC_C("rec_lock_add_to_waitq");
 
+	if (m_trx->in_innodb & TRX_FORCE_ROLLBACK_ASYNC) {
+		return (DB_DEADLOCK);
+	}
+
 	m_mode |= LOCK_WAIT;
 
 	/* Do the preliminary checks, and set query thread state */
@@ -1796,6 +1802,19 @@ RecLock::add_to_waitq(const lock_t* wait_for, const lock_prdt_t* prdt)
 
 	ut_ad(lock_get_wait(lock));
 
+	DeadlockChecker::check_and_resolve(lock, m_trx);
+
+	obprintf(stderr, "setting lock wait state %p\n", lock);
+	set_wait_state(lock);
+	obprintf(stderr, "setted lock wait state %p\n", lock);
+
+	MONITOR_INC(MONITOR_LOCKREC_WAIT);
+
+	thd_report_row_lock_wait(current_thd, wait_for->trx->mysql_thd);
+
+	return DB_LOCK_WAIT;
+#if 0
+
 	dberr_t	err = deadlock_check(lock);
 
 	ut_ad(trx_mutex_own(m_trx));
@@ -1805,6 +1824,7 @@ RecLock::add_to_waitq(const lock_t* wait_for, const lock_prdt_t* prdt)
 		thd_report_row_lock_wait(current_thd, wait_for->trx->mysql_thd);
 	}
 	return(err);
+#endif
 }
 
 /*********************************************************************//**
@@ -3982,12 +4002,17 @@ lock_table_enqueue_waiting(
 		ut_ad(0);
 	}
 
+	if (trx->in_innodb & TRX_FORCE_ROLLBACK_ASYNC) {
+		return (DB_DEADLOCK);
+	}
+
 	/* Enqueue the lock request that will wait to be granted */
 	lock = lock_table_create(table, mode | LOCK_WAIT, trx);
 
 	const trx_t*	victim_trx =
 			DeadlockChecker::check_and_resolve(lock, trx);
 
+#if 0
 	if (victim_trx != 0) {
 		ut_ad(victim_trx == trx);
 
@@ -4004,6 +4029,7 @@ lock_table_enqueue_waiting(
 
 		return(DB_SUCCESS);
 	}
+#endif
 
 	trx->lock.que_state = TRX_QUE_LOCK_WAIT;
 
@@ -7521,6 +7547,8 @@ DeadlockChecker::get_first_lock(ulint* heap_no) const
 			lock = lock_rec_get_next_const(*heap_no, lock);
 		}
 
+		obprintf(stderr, "lock_get_wait state %d, %p\n",
+			lock->type_mode, lock);
 		ut_a(!lock_get_wait(lock));
 	} else {
 		/* Table locks don't care about the heap_no. */
@@ -7627,6 +7655,8 @@ DeadlockChecker::search()
 
 	ut_ad(m_start != NULL);
 	ut_ad(m_wait_lock != NULL);
+	obprintf(stderr, "m_wait_lock->trx->state = %d, %p\n",
+		m_wait_lock->trx->state, &m_wait_lock->trx->state);
 	check_trx_state(m_wait_lock->trx);
 	ut_ad(m_mark_start <= s_lock_mark_counter);
 
@@ -7874,6 +7904,46 @@ DeadlockChecker::check_and_resolve_inner_orbit(void *aux)
 	return (unsigned long)check_and_resolve_inner(args->lock, args->trx);
 }
 
+std::deque<orbit_task> checker_wait_queue;
+sem_t checker_wait_queue_sem;
+int checker_wait_queue_lock_init = sem_init(&checker_wait_queue_sem, 0, 0);
+
+pthread_spinlock_t checker_wait_lock;
+int checker_wait_lock_init = pthread_spin_init(&checker_wait_lock, PTHREAD_PROCESS_PRIVATE);
+
+void *checker_wait_func(void *aux)
+{
+	while (true) {
+		sem_wait(&checker_wait_queue_sem);
+		pthread_spin_lock(&checker_wait_lock);
+		orbit_task task = checker_wait_queue.front();
+		checker_wait_queue.pop_front();
+		pthread_spin_unlock(&checker_wait_lock);
+
+		do {
+			union orbit_result result;
+			obprintf(stderr, "before recvv\n");
+			int ret = orbit_recvv(&result, &task);
+			if (ret == -1) {
+				int err = errno;
+				fprintf(stderr, "get error: %s\n", strerror(err));
+				abort();
+			}
+			obprintf(stderr, "orbit_recvv returns %d\n", ret);
+
+			if (ret == 0)
+				break;
+			lock_mutex_enter();
+			/* TODO: Stale check */
+			orbit_apply(&result.scratch);
+			lock_mutex_exit();
+		} while (true);
+	}
+}
+
+pthread_t checker_wait;
+int checker_wait_init = pthread_create(&checker_wait, NULL, checker_wait_func, NULL);
+
 /** Checks if a joining lock request results in a deadlock. If a deadlock is
 found this function will resolve the deadlock by choosing a victim transaction
 and rolling it back. It will attempt to resolve all deadlocks. The returned
@@ -7930,6 +8000,18 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 	obprintf(stderr, "orbit_call_async returns %d\n", ret);
 	if (ret != 0) abort();
 
+#if 1
+
+	trx_mutex_enter(trx);
+
+	pthread_spin_lock(&checker_wait_lock);
+	checker_wait_queue.push_back(task);
+	pthread_spin_unlock(&checker_wait_lock);
+	sem_post(&checker_wait_queue_sem);
+
+	return NULL;
+
+#else
 	do {
 		union orbit_result result;
 		obprintf(stderr, "before recvv\n");
@@ -7963,6 +8045,7 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 	trx_mutex_enter(trx);
 
 	return(victim_trx);
+#endif
 }
 
 /**
