@@ -60,6 +60,8 @@ Created 5/7/1996 Heikki Tuuri
 #include "orbit.h"
 #include <pthread.h>
 #include <semaphore.h>
+#include <map>
+#include <deque>
 
 #include <set>
 
@@ -473,6 +475,8 @@ lock_sys_create(
 	ulint	lock_sys_sz;
 
 	lock_sys_sz = sizeof(*lock_sys) + OS_THREAD_MAX_N * sizeof(srv_slot_t);
+	// typedef int a_t[sizeof(lock_sys_t)]; // its size is 312 bytes
+	// a_t *a = (int(*)[1])NULL;
 
 	lock_sys = static_cast<lock_sys_t*>(
 			orbit_pool_alloc(trx_ob_pool, lock_sys_sz));
@@ -484,9 +488,13 @@ lock_sys_create(
 
 	lock_sys->last_slot = lock_sys->waiting_threads;
 
-	mutex_create(LATCH_ID_LOCK_SYS, &lock_sys->mutex);
+	lock_sys->mutex = reinterpret_cast<LockMutex*>(
+		ut_malloc_nokey(sizeof(*lock_sys->mutex)));
+	mutex_create(LATCH_ID_LOCK_SYS, lock_sys->mutex);
 
-	mutex_create(LATCH_ID_LOCK_SYS_WAIT, &lock_sys->wait_mutex);
+	lock_sys->wait_mutex = reinterpret_cast<LockMutex*>(
+		ut_malloc_nokey(sizeof(*lock_sys->wait_mutex)));
+	mutex_create(LATCH_ID_LOCK_SYS_WAIT, lock_sys->wait_mutex);
 
 	lock_sys->timeout_event = os_event_create(0);
 
@@ -586,8 +594,10 @@ lock_sys_close(void)
 
 	os_event_destroy(lock_sys->timeout_event);
 
-	mutex_destroy(&lock_sys->mutex);
-	mutex_destroy(&lock_sys->wait_mutex);
+	mutex_destroy(lock_sys->mutex);
+	mutex_destroy(lock_sys->wait_mutex);
+	ut_free(lock_sys->mutex);
+	ut_free(lock_sys->wait_mutex);
 
 	srv_slot_t*	slot = lock_sys->waiting_threads;
 
@@ -7466,6 +7476,64 @@ DeadlockChecker::print(const lock_t* lock)
 	}
 }
 
+#define OUTPUT_ORBIT_ALLOC 1
+
+#if OUTPUT_ORBIT_ALLOC
+
+struct dl_ck_lock {
+	unsigned long taskid;
+	const void *lock;
+};
+typedef std::deque<dl_ck_lock> dll_t;
+dll_t dl_ck_lock_list;
+
+void *checker_output_func(void *);
+void __mysql_dl_ck_lock(const void *lock)
+{
+	static pthread_t checker_output;
+	static int checker_output_init = -1;
+	if (unlikely(checker_output_init != 0)) {
+		checker_output_init = pthread_create(&checker_output, NULL,
+						     checker_output_func, NULL);
+		if (checker_output_init != 0) {
+			int err = errno;
+			fprintf(stderr, "pthread create failed %s\n", strerror(err));
+		}
+
+		checker_output_init = 0;
+	}
+
+	extern unsigned long orbit_taskid;
+
+	dl_ck_lock_list.push_back({ orbit_taskid, lock });
+}
+
+void *checker_output_func(void *)
+{
+	int err;
+
+	sleep(50);
+
+	FILE *outfile = fopen("/root/dl_ck_locks.txt", "w");
+	if (outfile == NULL) goto error;
+
+	for (dll_t::const_iterator it = dl_ck_lock_list.begin(),
+		end = dl_ck_lock_list.end();
+		it != end; ++it)
+		fprintf(outfile, "%lu %p\n", it->taskid, it->lock);
+
+	fclose(outfile);
+
+	return NULL;
+
+error:
+	err = errno;
+	fprintf(stderr, "orbit open file error %s\n", strerror(err));
+	return NULL;
+}
+
+#endif
+
 /** Get the next lock in the queue that is owned by a transaction whose
 sub-tree has not already been searched.
 Note: "next" here means PREV for table locks.
@@ -7498,6 +7566,9 @@ DeadlockChecker::get_next_lock(const lock_t* lock, ulint heap_no) const
 
 	obprintf(stderr, "in checker next_lock is %p is rec: %d\n",
 		lock, lock_get_type_low(lock) == LOCK_REC);
+#if OUTPUT_ORBIT_ALLOC
+	__mysql_dl_ck_lock(lock);
+#endif
 	return(lock);
 }
 
@@ -7568,6 +7639,9 @@ DeadlockChecker::get_first_lock(ulint* heap_no) const
 
 	obprintf(stderr, "in checker first_lock is %p is rec: %d\n",
 		lock, lock_get_type_low(lock) == LOCK_REC);
+#if OUTPUT_ORBIT_ALLOC
+	__mysql_dl_ck_lock(lock);
+#endif
 	return(lock);
 }
 
@@ -7966,14 +8040,14 @@ void *checker_wait_func(void *aux)
 
 		do {
 			union orbit_result result;
-			fprintf(stderr, "before recvv\n");
+			obprintf(stderr, "before recvv\n");
 			int ret = orbit_recvv(&result, &task);
 			if (ret == -1) {
 				int err = errno;
 				fprintf(stderr, "get error: %s\n", strerror(err));
 				abort();
 			}
-			fprintf(stderr, "orbit_recvv returns %d\n", ret);
+			obprintf(stderr, "orbit_recvv returns %d\n", ret);
 
 			if (ret == 0)
 				break;
@@ -7987,6 +8061,126 @@ void *checker_wait_func(void *aux)
 
 pthread_t checker_wait;
 int checker_wait_init = pthread_create(&checker_wait, NULL, checker_wait_func, NULL);
+
+#if OUTPUT_ORBIT_ALLOC
+struct alloc_rec {
+	void *ptr;
+	size_t size;
+	int count;
+	int loc; // location id (in alloc_location_map)
+};
+typedef std::deque<alloc_rec> all_t;
+typedef std::map<std::pair<int, const char *>, int> alm_t;
+all_t alloc_rec_list;
+alm_t alloc_location_map;
+
+extern "C"
+void __mysql_orbit_alloc_callback(void *ptr, size_t size, const char *file, int line)
+{
+	alm_t::iterator it = alloc_location_map.find({line, file});
+	if (it == alloc_location_map.end()) {
+		it = alloc_location_map.insert(it, std::make_pair(
+			std::make_pair(line, file), alloc_location_map.size() + 1));
+	} else {
+		alloc_rec &rec = alloc_rec_list.back();
+		if (rec.loc == it->second && rec.size == size) {
+			++rec.count;
+			return;
+		}
+	}
+
+	alloc_rec_list.push_back({ ptr, size, 1, it->second });
+}
+
+#define PREAMBLE \
+	static pthread_spinlock_t __lock; \
+	static int __lock_init = pthread_spin_init(&__lock, PTHREAD_PROCESS_PRIVATE); \
+	pthread_spin_lock(&__lock)
+#define POSTLOGUE pthread_spin_unlock(&__lock)
+
+struct trx_pool_relation {
+	void *trx;
+	void *rec;
+	void *tbl;
+};
+typedef std::deque<trx_pool_relation> tprl_t;
+tprl_t trx_pool_relation_list;
+inline void __mysql_trx_pool_relation(void *trx, void *rec, void *tbl)
+{
+	PREAMBLE;
+	trx_pool_relation_list.push_back({ trx, rec, tbl });
+	POSTLOGUE;
+}
+
+ib_time_monotonic_us_t program_start_time = ut_time_monotonic_us();
+
+struct trx_run_trace {
+	void *trx;
+	ib_time_monotonic_us_t time;
+	int op;
+};
+typedef std::deque<trx_run_trace> trtl_t;
+trtl_t trx_run_trace_list;
+void __mysql_trx_run_trace(void *trx, int op)
+{
+	PREAMBLE;
+	trx_run_trace_list.push_back({ trx, ut_time_monotonic_us(), op });
+	POSTLOGUE;
+}
+
+void *alloc_output_func(void *)
+{
+	int err;
+
+	sleep(60);
+
+	FILE *outfile = fopen("/root/alloc_rec.txt", "w");
+	if (outfile == NULL) goto error;
+
+	fprintf(outfile, "%lu\n", alloc_location_map.size());
+	for (alm_t::const_iterator it = alloc_location_map.begin(), end = alloc_location_map.end();
+		it != end; ++it)
+		fprintf(outfile, "%d %s:%d\n", it->second, it->first.second, it->first.first);
+
+	fprintf(outfile, "%lu\n", alloc_rec_list.size());
+	for (all_t::const_iterator it = alloc_rec_list.begin(), end = alloc_rec_list.end();
+		it != end; ++it)
+		fprintf(outfile, "%p %lu %d %d\n", it->ptr, it->size, it->count, it->loc);
+
+	fclose(outfile);
+
+	outfile = fopen("/root/trx_pool_relation.txt", "w");
+	if (outfile == NULL) goto error;
+
+	for (tprl_t::const_iterator it = trx_pool_relation_list.begin(),
+		end = trx_pool_relation_list.end();
+		it != end; ++it)
+		fprintf(outfile, "%p %p %p\n", it->trx, it->rec, it->tbl);
+
+	fclose(outfile);
+
+	outfile = fopen("/root/trx_run_trace.txt", "w");
+	if (outfile == NULL) goto error;
+
+	fprintf(outfile, "%lu\n", program_start_time);
+	for (trtl_t::const_iterator it = trx_run_trace_list.begin(),
+		end = trx_run_trace_list.end();
+		it != end; ++it)
+		fprintf(outfile, "%p %lu %d\n", it->trx, it->time, it->op);
+
+	fclose(outfile);
+
+	return NULL;
+
+error:
+	err = errno;
+	fprintf(stderr, "orbit open file error %s\n", strerror(err));
+	return NULL;
+}
+
+pthread_t alloc_output;
+int alloc_output_init = pthread_create(&alloc_output, NULL, alloc_output_func, NULL);
+#endif
 
 /** Checks if a joining lock request results in a deadlock. If a deadlock is
 found this function will resolve the deadlock by choosing a victim transaction
@@ -8100,7 +8294,9 @@ lock_trx_alloc_locks(trx_t* trx)
 {
 	ulint	sz = REC_LOCK_SIZE * REC_LOCK_CACHE;
 	// byte*	ptr = reinterpret_cast<byte*>(ut_malloc_nokey(sz));
+	byte	*rec_ptr, *tbl_ptr;
 	byte*	ptr = reinterpret_cast<byte*>(orbit_pool_alloc(trx_ob_pool, sz));
+	rec_ptr = ptr;
 
 	/* We allocate one big chunk and then distribute it among
 	the rest of the elements. The allocated chunk pointer is always
@@ -8114,10 +8310,14 @@ lock_trx_alloc_locks(trx_t* trx)
 	sz = TABLE_LOCK_SIZE * TABLE_LOCK_CACHE;
 	// ptr = reinterpret_cast<byte*>(ut_malloc_nokey(sz));
 	ptr = reinterpret_cast<byte*>(orbit_pool_alloc(trx_ob_pool, sz));
+	tbl_ptr = ptr;
 
 	for (ulint i = 0; i < TABLE_LOCK_CACHE; ++i, ptr += TABLE_LOCK_SIZE) {
 		trx->lock.table_pool.push_back(
 			reinterpret_cast<ib_lock_t*>(ptr));
 	}
 
+#if OUTPUT_ORBIT_ALLOC
+	__mysql_trx_pool_relation(trx, rec_ptr, tbl_ptr);
+#endif
 }

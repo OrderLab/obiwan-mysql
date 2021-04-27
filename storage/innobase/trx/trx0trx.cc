@@ -269,7 +269,9 @@ struct TrxFactory {
 			trx->trx_savepoints,
 			&trx_named_savept_t::trx_savepoints);
 
-		mutex_create(LATCH_ID_TRX, &trx->mutex);
+		trx->mutex = reinterpret_cast<TrxMutex*>(
+			ut_malloc_nokey(sizeof(*trx->mutex)));
+		mutex_create(LATCH_ID_TRX, trx->mutex);
 		mutex_create(LATCH_ID_TRX_UNDO, &trx->undo_mutex);
 
 		lock_trx_alloc_locks(trx);
@@ -302,8 +304,9 @@ struct TrxFactory {
 		UT_DELETE(trx->xid);
 		ut_free(trx->detailed_error);
 
-		mutex_free(&trx->mutex);
+		mutex_free(trx->mutex);
 		mutex_free(&trx->undo_mutex);
+		ut_free(trx->mutex);
 
 		trx->mod_tables.~trx_mod_tables_t();
 
@@ -429,15 +432,20 @@ struct TrxPoolManagerLock {
 /** Use explicit mutexes for the trx_t pool and its manager. */
 typedef Pool<trx_t, TrxFactory, TrxPoolLock> trx_pool_t;
 typedef PoolManager<trx_pool_t, TrxPoolManagerLock > trx_pools_t;
+// typedef int a_t[offsetof(trx_t, lock.deadlock_mark)]; // its offset is 112 bytes
+// a_t *a = (int(*)[1])NULL;
+// typedef int a_t[sizeof(trx_pool_t::Element)]; // its size is 872 bytes (trx_t is 864)
+// a_t *a = (int(*)[1])NULL;
 
 /** The trx_t pool manager */
 static trx_pools_t* trx_pools;
 
 /** Size of on trx_t pool in bytes. */
-static const ulint MAX_TRX_BLOCK_SIZE = 1024 * 1024 * 4;
+static const ulint MAX_TRX_BLOCK_SIZE = 1024 * 512;
+// static const ulint MAX_TRX_BLOCK_SIZE = 1024 * 1024 * 4;
 
-// default 4M * 16
-orbit_pool *trx_ob_pool = orbit_pool_create(MAX_TRX_BLOCK_SIZE * 16);
+// default 64M
+orbit_pool *trx_ob_pool = orbit_pool_create(1024 * 1024 * 64);
 
 /** Create the trx_t pool */
 void
@@ -456,6 +464,11 @@ trx_pool_close()
 
 	trx_pools = 0;
 }
+
+#define OUTPUT_ORBIT_ALLOC 1
+#if OUTPUT_ORBIT_ALLOC
+void __mysql_trx_run_trace(void *trx, int op);
+#endif
 
 /** @return a trx_t instance from trx_pools. */
 static
@@ -497,6 +510,10 @@ trx_create_low()
 	trx_free(). */
 	ut_a(trx->mod_tables.size() == 0);
 
+#if OUTPUT_ORBIT_ALLOC
+	__mysql_trx_run_trace(trx, 1);
+#endif
+
 	return(trx);
 }
 
@@ -508,6 +525,10 @@ void
 trx_free(trx_t*& trx)
 {
 	assert_trx_is_free(trx);
+
+#if OUTPUT_ORBIT_ALLOC
+	__mysql_trx_run_trace(trx, 2);
+#endif
 
 	trx->mysql_thd = 0;
 

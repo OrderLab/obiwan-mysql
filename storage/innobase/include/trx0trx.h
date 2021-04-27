@@ -896,7 +896,7 @@ struct TrxVersion {
 typedef std::list<TrxVersion, ut_allocator<TrxVersion> > hit_list_t;
 
 struct trx_t {
-	TrxMutex	mutex;		/*!< Mutex protecting the fields
+	TrxMutex*	mutex;		/*!< Mutex protecting the fields
 					state and lock (except some fields
 					of lock, which are protected by
 					lock_sys->mutex) */
@@ -1351,16 +1351,16 @@ struct commit_node_t{
 
 
 /** Test if trx->mutex is owned. */
-#define trx_mutex_own(t) mutex_own(&t->mutex)
+#define trx_mutex_own(t) mutex_own(t->mutex)
 
 /** Acquire the trx->mutex. */
 #define trx_mutex_enter(t) do {			\
-	mutex_enter(&t->mutex);			\
+	mutex_enter(t->mutex);			\
 } while (0)
 
 /** Release the trx->mutex. */
 #define trx_mutex_exit(t) do {			\
-	mutex_exit(&t->mutex);			\
+	mutex_exit(t->mutex);			\
 } while (0)
 
 /** Track if a transaction is executing inside InnoDB code. It acts

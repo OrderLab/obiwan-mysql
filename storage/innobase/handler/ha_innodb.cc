@@ -2597,6 +2597,11 @@ innobase_trx_init(
 	DBUG_VOID_RETURN;
 }
 
+#define OUTPUT_ORBIT_ALLOC 1
+#if OUTPUT_ORBIT_ALLOC
+void __mysql_trx_run_trace(void *trx, int op);
+#endif
+
 /*********************************************************************//**
 Allocates an InnoDB transaction for a MySQL handler object for DML.
 @return InnoDB transaction handle */
@@ -2614,6 +2619,9 @@ innobase_trx_allocate(
 	trx = trx_allocate_for_mysql();
 
 	trx->mysql_thd = thd;
+#if OUTPUT_ORBIT_ALLOC
+	__mysql_trx_run_trace(trx, 31);
+#endif
 
 	innobase_trx_init(thd, trx);
 

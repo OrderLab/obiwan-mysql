@@ -647,6 +647,11 @@ que_thr_node_step(
 	return(NULL);
 }
 
+#define OUTPUT_ORBIT_ALLOC 0
+#if OUTPUT_ORBIT_ALLOC
+void __mysql_trx_run_trace(void *trx, int op);
+#endif
+
 /**********************************************************************//**
 Moves a thread from another state to the QUE_THR_RUNNING state. Increments
 the n_active_thrs counters of the query graph and transaction if thr was
@@ -665,6 +670,10 @@ que_thr_move_to_run_state(
 		trx_t*	trx;
 
 		trx = thr_get_trx(thr);
+
+#if OUTPUT_ORBIT_ALLOC
+		__mysql_trx_run_trace(trx, 10);
+#endif
 
 		thr->graph->n_active_thrs++;
 
@@ -715,6 +724,10 @@ que_thr_stop(
 
 		return(FALSE);
 	}
+
+#if OUTPUT_ORBIT_ALLOC
+	__mysql_trx_run_trace(trx, 20);
+#endif
 
 	return(TRUE);
 }
@@ -799,6 +812,10 @@ que_thr_stop_for_mysql(
 
 	trx = thr_get_trx(thr);
 
+#if OUTPUT_ORBIT_ALLOC
+	__mysql_trx_run_trace(trx, 21);
+#endif
+
 	trx_mutex_enter(trx);
 
 	if (thr->state == QUE_THR_RUNNING) {
@@ -843,6 +860,10 @@ que_thr_move_to_run_state_for_mysql(
 {
 	ut_a(thr->magic_n == QUE_THR_MAGIC_N);
 
+#if OUTPUT_ORBIT_ALLOC
+	__mysql_trx_run_trace(trx, 11);
+#endif
+
 	if (!thr->is_active) {
 
 		thr->graph->n_active_thrs++;
@@ -876,6 +897,10 @@ que_thr_stop_for_mysql_no_error(
 	thr->graph->n_active_thrs--;
 
 	trx->lock.n_active_thrs--;
+
+#if OUTPUT_ORBIT_ALLOC
+	__mysql_trx_run_trace(trx, 22);
+#endif
 }
 
 /****************************************************************//**

@@ -246,12 +246,50 @@ bool mysql_update_prepare_table(THD *thd, SELECT_LEX *select)
     true  - error
 */
 
+#define OUTPUT_ORBIT_ALLOC 1
+
+#if OUTPUT_ORBIT_ALLOC
+void __mysql_trx_run_trace(void *trx, int op);
+
+bool mysql_update_inner(THD *thd,
+                  List<Item> &fields,
+                  List<Item> &values,
+                  ha_rows limit,
+                  enum enum_duplicates handle_duplicates,
+                  ha_rows *found_return, ha_rows *updated_return);
+
 bool mysql_update(THD *thd,
                   List<Item> &fields,
                   List<Item> &values,
                   ha_rows limit,
                   enum enum_duplicates handle_duplicates,
                   ha_rows *found_return, ha_rows *updated_return)
+{
+  // declaration hack
+  void*& thd_to_trx(THD*  thd);
+
+  __mysql_trx_run_trace(thd_to_trx(thd), 30);
+  bool ret = mysql_update_inner(thd, fields, values, limit, handle_duplicates,
+                                found_return, updated_return);
+  __mysql_trx_run_trace(thd_to_trx(thd), 40);
+  return ret;
+}
+
+bool mysql_update_inner(THD *thd,
+                  List<Item> &fields,
+                  List<Item> &values,
+                  ha_rows limit,
+                  enum enum_duplicates handle_duplicates,
+                  ha_rows *found_return, ha_rows *updated_return)
+
+#else
+bool mysql_update(THD *thd,
+                  List<Item> &fields,
+                  List<Item> &values,
+                  ha_rows limit,
+                  enum enum_duplicates handle_duplicates,
+                  ha_rows *found_return, ha_rows *updated_return)
+#endif
 {
   DBUG_ENTER("mysql_update");
 
