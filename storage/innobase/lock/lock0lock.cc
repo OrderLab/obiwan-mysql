@@ -7476,7 +7476,7 @@ DeadlockChecker::print(const lock_t* lock)
 	}
 }
 
-#define OUTPUT_ORBIT_ALLOC 1
+#define OUTPUT_ORBIT_ALLOC 0
 
 #if OUTPUT_ORBIT_ALLOC
 
@@ -8074,9 +8074,16 @@ typedef std::map<std::pair<int, const char *>, int> alm_t;
 all_t alloc_rec_list;
 alm_t alloc_location_map;
 
+#define PROLOGUE \
+	static pthread_spinlock_t __lock; \
+	static int __lock_init = pthread_spin_init(&__lock, PTHREAD_PROCESS_PRIVATE); \
+	pthread_spin_lock(&__lock)
+#define POSTLOGUE pthread_spin_unlock(&__lock)
+
 extern "C"
 void __mysql_orbit_alloc_callback(void *ptr, size_t size, const char *file, int line)
 {
+	PROLOGUE;
 	alm_t::iterator it = alloc_location_map.find({line, file});
 	if (it == alloc_location_map.end()) {
 		it = alloc_location_map.insert(it, std::make_pair(
@@ -8085,18 +8092,14 @@ void __mysql_orbit_alloc_callback(void *ptr, size_t size, const char *file, int 
 		alloc_rec &rec = alloc_rec_list.back();
 		if (rec.loc == it->second && rec.size == size) {
 			++rec.count;
+			POSTLOGUE;
 			return;
 		}
 	}
 
 	alloc_rec_list.push_back({ ptr, size, 1, it->second });
+	POSTLOGUE;
 }
-
-#define PREAMBLE \
-	static pthread_spinlock_t __lock; \
-	static int __lock_init = pthread_spin_init(&__lock, PTHREAD_PROCESS_PRIVATE); \
-	pthread_spin_lock(&__lock)
-#define POSTLOGUE pthread_spin_unlock(&__lock)
 
 struct trx_pool_relation {
 	void *trx;
@@ -8107,7 +8110,7 @@ typedef std::deque<trx_pool_relation> tprl_t;
 tprl_t trx_pool_relation_list;
 inline void __mysql_trx_pool_relation(void *trx, void *rec, void *tbl)
 {
-	PREAMBLE;
+	PROLOGUE;
 	trx_pool_relation_list.push_back({ trx, rec, tbl });
 	POSTLOGUE;
 }
@@ -8123,7 +8126,7 @@ typedef std::deque<trx_run_trace> trtl_t;
 trtl_t trx_run_trace_list;
 void __mysql_trx_run_trace(void *trx, int op)
 {
-	PREAMBLE;
+	PROLOGUE;
 	trx_run_trace_list.push_back({ trx, ut_time_monotonic_us(), op });
 	POSTLOGUE;
 }

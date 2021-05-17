@@ -465,7 +465,7 @@ trx_pool_close()
 	trx_pools = 0;
 }
 
-#define OUTPUT_ORBIT_ALLOC 1
+#define OUTPUT_ORBIT_ALLOC 0
 #if OUTPUT_ORBIT_ALLOC
 void __mysql_trx_run_trace(void *trx, int op);
 #endif

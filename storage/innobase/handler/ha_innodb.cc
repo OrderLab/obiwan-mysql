@@ -2597,7 +2597,7 @@ innobase_trx_init(
 	DBUG_VOID_RETURN;
 }
 
-#define OUTPUT_ORBIT_ALLOC 1
+#define OUTPUT_ORBIT_ALLOC 0
 #if OUTPUT_ORBIT_ALLOC
 void __mysql_trx_run_trace(void *trx, int op);
 #endif
