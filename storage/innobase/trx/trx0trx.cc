@@ -223,7 +223,10 @@ trx_init(
 }
 
 // Forward declaration.
+extern orbit_pool *default_ob_pool;
 extern orbit_pool *trx_ob_pool;
+extern orbit_pool *rec_lock_ob_pool;
+extern orbit_pool *table_lock_ob_pool;
 
 /** For managing the life-cycle of the trx_t instance that we get
 from the pool. */
@@ -321,7 +324,7 @@ struct TrxFactory {
 			/* See lock_trx_alloc_locks() why we only free
 			the first element. */
 
-			orbit_pool_free(trx_ob_pool, trx->lock.rec_pool[0], 1);
+			orbit_pool_free(rec_lock_ob_pool, trx->lock.rec_pool[0], 1);
 			// ut_free(trx->lock.rec_pool[0]);
 		}
 
@@ -330,9 +333,11 @@ struct TrxFactory {
 			/* See lock_trx_alloc_locks() why we only free
 			the first element. */
 
-			orbit_pool_free(trx_ob_pool, trx->lock.table_pool[0], 1);
+			orbit_pool_free(table_lock_ob_pool, trx->lock.table_pool[0], 1);
 			// ut_free(trx->lock.table_pool[0]);
 		}
+
+		orbit_pool_free(trx_ob_pool, trx->lock.wait_lock, 1);
 
 		trx->lock.rec_pool.~lock_pool_t();
 
@@ -449,7 +454,22 @@ static const ulint MAX_TRX_BLOCK_SIZE = 1024 * 512;
 // static const ulint MAX_TRX_BLOCK_SIZE = 1024 * 1024 * 4;
 
 // default 64M
-orbit_pool *trx_ob_pool = orbit_pool_create(1024 * 1024 * 64);
+#if 0
+orbit_pool *default_ob_pool = orbit_pool_create_at(1024 * 1024 * 64, (void*)0x800000000UL);
+orbit_pool *trx_ob_pool = orbit_pool_create_at(1024 * 1024 * 64, (void*)0x810000000UL);
+orbit_pool *rec_lock_ob_pool = orbit_pool_create_at(1024 * 1024 * 64, (void*)0x820000000UL);
+orbit_pool *table_lock_ob_pool = orbit_pool_create_at(1024 * 1024 * 64, (void*)0x830000000UL);
+#elif 1
+orbit_pool *default_ob_pool;
+orbit_pool *trx_ob_pool = orbit_pool_create_at(1024 * 1024 * 64, (void*)0x810000000UL);
+orbit_pool *rec_lock_ob_pool;
+orbit_pool *table_lock_ob_pool = default_ob_pool = rec_lock_ob_pool = orbit_pool_create_at(1024 * 1024 * 64, (void*)0x830000000UL);
+#else
+orbit_pool *default_ob_pool;
+orbit_pool *trx_ob_pool;
+orbit_pool *rec_lock_ob_pool;
+orbit_pool *table_lock_ob_pool = default_ob_pool = trx_ob_pool = rec_lock_ob_pool = orbit_pool_create_at(1024 * 1024 * 64, (void*)0x800000000UL);
+#endif
 
 /** Create the trx_t pool */
 void

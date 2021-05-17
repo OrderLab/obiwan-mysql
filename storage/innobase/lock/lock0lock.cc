@@ -77,13 +77,15 @@ Created 5/7/1996 Heikki Tuuri
 my_bool	innobase_deadlock_detect = TRUE;
 
 /** Total number of cached record locks */
-static const ulint	REC_LOCK_CACHE = 8;
+static const ulint	REC_LOCK_CACHE = 1;
+// static const ulint	REC_LOCK_CACHE = 8;
 
 /** Maximum record lock size in bytes */
 static const ulint	REC_LOCK_SIZE = sizeof(ib_lock_t) + 256;
 
 /** Total number of cached table locks */
-static const ulint	TABLE_LOCK_CACHE = 8;
+static const ulint	TABLE_LOCK_CACHE = 1;
+// static const ulint	TABLE_LOCK_CACHE = 8;
 
 /** Size in bytes, of the table lock instance */
 static const ulint	TABLE_LOCK_SIZE = sizeof(ib_lock_t);
@@ -463,7 +465,10 @@ lock_sec_rec_cons_read_sees(
 }
 
 // TODO: one pool per type of object
+extern orbit_pool *default_ob_pool;
 extern orbit_pool *trx_ob_pool;
+extern orbit_pool *rec_lock_ob_pool;
+extern orbit_pool *table_lock_ob_pool;
 
 /*********************************************************************//**
 Creates the lock system at database start. */
@@ -474,15 +479,20 @@ lock_sys_create(
 {
 	ulint	lock_sys_sz;
 
-	lock_sys_sz = sizeof(*lock_sys) + OS_THREAD_MAX_N * sizeof(srv_slot_t);
 	// typedef int a_t[sizeof(lock_sys_t)]; // its size is 312 bytes
 	// a_t *a = (int(*)[1])NULL;
 
-	lock_sys = static_cast<lock_sys_t*>(
-			orbit_pool_alloc(trx_ob_pool, lock_sys_sz));
-	// lock_sys = static_cast<lock_sys_t*>(ut_zalloc_nokey(lock_sys_sz));
+	/* lock_sys_sz = sizeof(*lock_sys) + OS_THREAD_MAX_N * sizeof(srv_slot_t);
 
-	void*	ptr = &lock_sys[1];
+	lock_sys = static_cast<lock_sys_t*>(ut_zalloc_nokey(lock_sys_sz));
+
+	void*	ptr = &lock_sys[1]; */
+
+	lock_sys_sz = sizeof(*lock_sys);
+
+	lock_sys = static_cast<lock_sys_t*>(
+			orbit_pool_alloc(default_ob_pool, lock_sys_sz));
+	void*	ptr = malloc(OS_THREAD_MAX_N * sizeof(srv_slot_t));
 
 	lock_sys->waiting_threads = static_cast<srv_slot_t*>(ptr);
 
@@ -498,9 +508,9 @@ lock_sys_create(
 
 	lock_sys->timeout_event = os_event_create(0);
 
-	lock_sys->rec_hash = hash_create(n_cells, trx_ob_pool);
-	lock_sys->prdt_hash = hash_create(n_cells, trx_ob_pool);
-	lock_sys->prdt_page_hash = hash_create(n_cells, trx_ob_pool);
+	lock_sys->rec_hash = hash_create(n_cells, default_ob_pool);
+	lock_sys->prdt_hash = hash_create(n_cells, default_ob_pool);
+	lock_sys->prdt_page_hash = hash_create(n_cells, default_ob_pool);
 
 	if (!srv_read_only_mode) {
 		lock_latest_err_file = os_file_create_tmpfile(NULL);
@@ -532,22 +542,22 @@ lock_sys_resize(
 	lock_mutex_enter();
 
 	old_hash = lock_sys->rec_hash;
-	lock_sys->rec_hash = hash_create(n_cells, trx_ob_pool);
+	lock_sys->rec_hash = hash_create(n_cells, default_ob_pool);
 	HASH_MIGRATE(old_hash, lock_sys->rec_hash, lock_t, hash,
 		     lock_rec_lock_fold);
-	hash_table_free(old_hash, trx_ob_pool);
+	hash_table_free(old_hash, default_ob_pool);
 
 	old_hash = lock_sys->prdt_hash;
-	lock_sys->prdt_hash = hash_create(n_cells, trx_ob_pool);
+	lock_sys->prdt_hash = hash_create(n_cells, default_ob_pool);
 	HASH_MIGRATE(old_hash, lock_sys->prdt_hash, lock_t, hash,
 		     lock_rec_lock_fold);
-	hash_table_free(old_hash, trx_ob_pool);
+	hash_table_free(old_hash, default_ob_pool);
 
 	old_hash = lock_sys->prdt_page_hash;
-	lock_sys->prdt_page_hash = hash_create(n_cells, trx_ob_pool);
+	lock_sys->prdt_page_hash = hash_create(n_cells, default_ob_pool);
 	HASH_MIGRATE(old_hash, lock_sys->prdt_page_hash, lock_t, hash,
 		     lock_rec_lock_fold);
-	hash_table_free(old_hash, trx_ob_pool);
+	hash_table_free(old_hash, default_ob_pool);
 
 	/* need to update block->lock_hash_val */
 	for (ulint i = 0; i < srv_buf_pool_instances; ++i) {
@@ -588,9 +598,9 @@ lock_sys_close(void)
 		lock_latest_err_file = NULL;
 	}
 
-	hash_table_free(lock_sys->rec_hash, trx_ob_pool);
-	hash_table_free(lock_sys->prdt_hash, trx_ob_pool);
-	hash_table_free(lock_sys->prdt_page_hash, trx_ob_pool);
+	hash_table_free(lock_sys->rec_hash, default_ob_pool);
+	hash_table_free(lock_sys->prdt_hash, default_ob_pool);
+	hash_table_free(lock_sys->prdt_page_hash, default_ob_pool);
 
 	os_event_destroy(lock_sys->timeout_event);
 
@@ -607,7 +617,7 @@ lock_sys_close(void)
 		}
 	}
 
-	orbit_pool_free(trx_ob_pool, lock_sys, 1);
+	orbit_pool_free(default_ob_pool, lock_sys, 1);
 	// ut_free(lock_sys);
 
 	lock_sys = NULL;
@@ -1517,7 +1527,7 @@ RecLock::lock_alloc(
 
 		obprintf(stderr, "Orbit allocating rec lock from orbit pool.\n");
 		lock = reinterpret_cast<lock_t*>(
-			orbit_pool_alloc(trx_ob_pool, n_bytes));
+			orbit_pool_alloc(rec_lock_ob_pool, n_bytes));
 		obprintf(stderr, "Orbit allocated rec lock %p from pool\n", lock);
 	} else {
 
@@ -3803,7 +3813,7 @@ lock_table_create(
 
 		obprintf(stderr, "Orbit allocating table lock from orbit pool.\n");
 		lock = reinterpret_cast<lock_t*>(
-			orbit_pool_alloc(trx_ob_pool, sizeof(*lock)));
+			orbit_pool_alloc(table_lock_ob_pool, sizeof(*lock)));
 		obprintf(stderr, "Orbit allocated table lock %p from pool\n", lock);
 
 		/* lock = static_cast<lock_t*>(
@@ -8238,7 +8248,9 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 	obprintf(stderr, "before checker args = %p\n", args);
 
 	orbit_task task;
-	int ret = orbit_call_async(dld_ob, 0, 1, &trx_ob_pool, args, &task);
+	orbit_pool *pools[] = { default_ob_pool, trx_ob_pool, };
+	int ret = orbit_call_async(dld_ob, 0, sizeof(pools)/sizeof(*pools),
+			pools, args, &task);
 	obprintf(stderr, "orbit_call_async returns %d\n", ret);
 	if (ret != 0) abort();
 
@@ -8299,7 +8311,7 @@ lock_trx_alloc_locks(trx_t* trx)
 	ulint	sz = REC_LOCK_SIZE * REC_LOCK_CACHE;
 	// byte*	ptr = reinterpret_cast<byte*>(ut_malloc_nokey(sz));
 	byte	*rec_ptr, *tbl_ptr;
-	byte*	ptr = reinterpret_cast<byte*>(orbit_pool_alloc(trx_ob_pool, sz));
+	byte*	ptr = reinterpret_cast<byte*>(orbit_pool_alloc(rec_lock_ob_pool, sz));
 	rec_ptr = ptr;
 
 	/* We allocate one big chunk and then distribute it among
@@ -8313,7 +8325,7 @@ lock_trx_alloc_locks(trx_t* trx)
 
 	sz = TABLE_LOCK_SIZE * TABLE_LOCK_CACHE;
 	// ptr = reinterpret_cast<byte*>(ut_malloc_nokey(sz));
-	ptr = reinterpret_cast<byte*>(orbit_pool_alloc(trx_ob_pool, sz));
+	ptr = reinterpret_cast<byte*>(orbit_pool_alloc(table_lock_ob_pool, sz));
 	tbl_ptr = ptr;
 
 	for (ulint i = 0; i < TABLE_LOCK_CACHE; ++i, ptr += TABLE_LOCK_SIZE) {
