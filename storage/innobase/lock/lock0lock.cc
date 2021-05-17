@@ -8062,16 +8062,13 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 						check_and_resolve_inner_orbit);
 
 	// victim_trx = check_and_resolve_inner(lock, trx);
-	orbit_args *args = (orbit_args *)orbit_pool_alloc(
-				trx_ob_pool, sizeof(*args));
-	args->lock = lock;
-	args->trx = trx;
-	obprintf(stderr, "before checker args = %p\n", args);
+	orbit_args args = { .lock = lock, .trx = trx, };
+	obprintf(stderr, "before checker args = %p\n", &args);
 
 	orbit_task task;
 	orbit_pool *pools[] = { default_ob_pool, trx_ob_pool, };
 	int ret = orbit_call_async(dld_ob, 0, sizeof(pools)/sizeof(*pools),
-			pools, args, &task);
+			pools, &args, sizeof(args), &task);
 	obprintf(stderr, "orbit_call_async returns %d\n", ret);
 	if (ret != 0) abort();
 
@@ -8106,7 +8103,6 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 	} while (true);
 
 	obprintf(stderr, "after checker result = %p\n", victim_trx);
-	orbit_pool_free(trx_ob_pool, args, sizeof(*args));
 	// end of check_and_resolve_inner equivalent call
 
 	/* If the joining transaction was selected as the victim. */
