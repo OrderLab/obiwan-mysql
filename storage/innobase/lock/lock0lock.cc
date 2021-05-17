@@ -773,11 +773,11 @@ lock_set_lock_and_trx_wait(
 {
 	ut_ad(lock);
 	ut_ad(lock->trx == trx);
-	ut_ad(trx->lock.wait_lock == NULL);
+	ut_ad(*trx->lock.wait_lock == NULL);
 	ut_ad(lock_mutex_own());
 	ut_ad(trx_mutex_own(trx));
 
-	trx->lock.wait_lock = lock;
+	*trx->lock.wait_lock = lock;
 	lock->type_mode |= LOCK_WAIT;
 }
 
@@ -790,11 +790,11 @@ lock_reset_lock_and_trx_wait(
 /*=========================*/
 	lock_t*	lock)	/*!< in/out: record lock */
 {
-	ut_ad(lock->trx->lock.wait_lock == lock);
+	ut_ad(*lock->trx->lock.wait_lock == lock);
 	ut_ad(lock_get_wait(lock));
 	ut_ad(lock_mutex_own());
 
-	lock->trx->lock.wait_lock = NULL;
+	*lock->trx->lock.wait_lock = NULL;
 	lock->type_mode &= ~LOCK_WAIT;
 }
 
@@ -805,12 +805,12 @@ lock_reset_lock_and_trx_wait_orbit(
 	lock_t*	lock,	/*!< in/out: record lock */
 	orbit_scratch *scratch)
 {
-	ut_ad(lock->trx->lock.wait_lock == lock);
+	ut_ad(*lock->trx->lock.wait_lock == lock);
 	ut_ad(lock_get_wait(lock));
 	ut_ad(lock_mutex_own());
 
-	// lock->trx->lock.wait_lock = NULL;
-	orbit_update(scratch, lock->trx->lock.wait_lock, NULL);
+	// *lock->trx->lock.wait_lock = NULL;
+	orbit_update(scratch, *lock->trx->lock.wait_lock, NULL);
 
 	// lock->type_mode &= ~LOCK_WAIT;
 	orbit_update(scratch, lock->type_mode, lock->type_mode & ~LOCK_WAIT);
@@ -1657,7 +1657,7 @@ RecLock::check_deadlock_result(const trx_t* victim_trx, lock_t* lock)
 
 		return(DB_DEADLOCK);
 
-	} else if (m_trx->lock.wait_lock == NULL) {
+	} else if (*m_trx->lock.wait_lock == NULL) {
 
 		/* If there was a deadlock but we chose another
 		transaction as a victim, it is possible that we
@@ -2290,7 +2290,7 @@ RecLock::jump_queue(
 	if (grant_lock) {
 
 		ut_ad(conflict_lock->trx->lock.que_state == TRX_QUE_LOCK_WAIT);
-		ut_ad(conflict_lock->trx->lock.wait_lock == conflict_lock);
+		ut_ad(*conflict_lock->trx->lock.wait_lock == conflict_lock);
 
 #ifdef UNIV_DEBUG
 		ib::info() << "Granting High Priority Transaction (ID): "
@@ -2468,14 +2468,14 @@ RecLock::make_trx_hit_list(
 		if (trx->lock.que_state == TRX_QUE_LOCK_WAIT) {
 
 			/* Assert that it is not waiting for current record. */
-			ut_ad(trx->lock.wait_lock != next);
+			ut_ad(*trx->lock.wait_lock != next);
 #ifdef UNIV_DEBUG
 			ib::info() << "High Priority Transaction (ID): "
 				   << lock->trx->id << " waking up blocking"
 				   << " transaction (ID): " << trx->id;
 #endif /* UNIV_DEBUG */
 			trx->lock.was_chosen_as_deadlock_victim = true;
-			lock_cancel_waiting_and_release(trx->lock.wait_lock);
+			lock_cancel_waiting_and_release(*trx->lock.wait_lock);
 			trx_mutex_exit(trx);
 			continue;
 		}
@@ -4033,7 +4033,7 @@ lock_table_enqueue_waiting(
 
 		return(DB_DEADLOCK);
 
-	} else if (trx->lock.wait_lock == NULL) {
+	} else if (*trx->lock.wait_lock == NULL) {
 		/* Deadlock resolution chose another transaction as a victim,
 		and we accidentally got our lock granted! */
 
@@ -4369,7 +4369,7 @@ lock_rec_unlock(
 	ut_ad(trx);
 	ut_ad(rec);
 	ut_ad(block->frame == page_align(rec));
-	ut_ad(!trx->lock.wait_lock);
+	ut_ad(!*trx->lock.wait_lock);
 	ut_ad(trx_state_eq(trx, TRX_STATE_ACTIVE));
 
 	heap_no = page_rec_get_heap_no(rec);
@@ -5290,10 +5290,10 @@ lock_trx_print_wait_and_mvcc_state(
 			" FOR THIS LOCK TO BE GRANTED:\n",
 			(ulong) difftime(ut_time(), trx->lock.wait_started));
 
-		if (lock_get_type_low(trx->lock.wait_lock) == LOCK_REC) {
-			lock_rec_print(file, trx->lock.wait_lock);
+		if (lock_get_type_low(*trx->lock.wait_lock) == LOCK_REC) {
+			lock_rec_print(file, *trx->lock.wait_lock);
 		} else {
-			lock_table_print(file, trx->lock.wait_lock);
+			lock_table_print(file, *trx->lock.wait_lock);
 		}
 
 		fprintf(file, "------------------\n");
@@ -7001,7 +7001,7 @@ lock_unlock_table_autoinc(
 {
 	ut_ad(!lock_mutex_own());
 	ut_ad(!trx_mutex_own(trx));
-	ut_ad(!trx->lock.wait_lock);
+	ut_ad(!*trx->lock.wait_lock);
 
 	/* This can be invoked on NOT_STARTED, ACTIVE, PREPARED,
 	but not COMMITTED transactions. */
@@ -7166,8 +7166,8 @@ lock_trx_handle_wait(
 
 	if (trx->lock.was_chosen_as_deadlock_victim) {
 		err = DB_DEADLOCK;
-	} else if (trx->lock.wait_lock != NULL) {
-		lock_cancel_waiting_and_release(trx->lock.wait_lock);
+	} else if (*trx->lock.wait_lock != NULL) {
+		lock_cancel_waiting_and_release(*trx->lock.wait_lock);
 		err = DB_LOCK_WAIT;
 	} else {
 		/* The lock was probably granted before we got here. */
@@ -7674,10 +7674,10 @@ DeadlockChecker::notify(const lock_t* lock) const
 	/* It is possible that the joining transaction was granted its
 	lock when we rolled back some other waiting transaction. */
 
-	if (m_start->lock.wait_lock != 0) {
+	if (*m_start->lock.wait_lock != 0) {
 		print("*** (2) WAITING FOR THIS LOCK TO BE GRANTED:\n");
 
-		print(m_start->lock.wait_lock);
+		print(*m_start->lock.wait_lock);
 	}
 
 	DBUG_PRINT("ib_lock", ("deadlock detected"));
@@ -7689,7 +7689,7 @@ const trx_t*
 DeadlockChecker::select_victim() const
 {
 	ut_ad(lock_mutex_own());
-	ut_ad(m_start->lock.wait_lock != 0);
+	ut_ad(*m_start->lock.wait_lock != 0);
 	ut_ad(m_wait_lock->trx != m_start);
 
 	// TODO: current checker cannot access thd
@@ -7803,7 +7803,7 @@ DeadlockChecker::search()
 			}
 
 
-			m_wait_lock = lock->trx->lock.wait_lock;
+			m_wait_lock = *lock->trx->lock.wait_lock;
 
 			lock = get_first_lock(&heap_no);
 
@@ -7884,7 +7884,7 @@ DeadlockChecker::trx_rollback(orbit_scratch *scratch, trx_t *victim_trx)
 			trx->lock.was_chosen_as_deadlock_victim, true);
 
 		lock_cancel_waiting_and_release_orbit(
-			trx->lock.wait_lock, scratch);
+			*trx->lock.wait_lock, scratch);
 
 		/* orbit_scratch_push_operation(scratch, trx_mutex_exit_orbit,
 			1, args); */
@@ -7902,7 +7902,7 @@ DeadlockChecker::trx_rollback(orbit_scratch *scratch, trx_t *victim_trx)
 
 	trx->lock.was_chosen_as_deadlock_victim = true;
 
-	lock_cancel_waiting_and_release(trx->lock.wait_lock);
+	lock_cancel_waiting_and_release(*trx->lock.wait_lock);
 
 	trx_mutex_exit(trx);
 }
@@ -7977,6 +7977,7 @@ DeadlockChecker::check_and_resolve_inner(const lock_t* lock, trx_t* trx)
 unsigned long
 DeadlockChecker::check_and_resolve_inner_orbit(void *aux)
 {
+	return 0;
 	orbit_args *args = (orbit_args*)aux;
 	obprintf(stderr, "in checker args = %p\n", args);
 	return (unsigned long)check_and_resolve_inner(args->lock, args->trx);
@@ -8005,7 +8006,7 @@ void apply_rollback(struct orbit_scratch *s)
 		if ((victim_trx->mysql_trx_list.prev || victim_trx->mysql_trx_list.next) &&
 			version == victim_trx->version &&
 			victim_trx->state == TRX_STATE_ACTIVE &&
-			victim_trx->lock.wait_lock != NULL)
+			*victim_trx->lock.wait_lock != NULL)
 		{
 			fprintf(stderr, "victim to rollback %p\n", victim_trx);
 			assert(victim_trx->lock.que_state == TRX_QUE_LOCK_WAIT);

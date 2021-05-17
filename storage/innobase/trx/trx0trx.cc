@@ -275,6 +275,10 @@ struct TrxFactory {
 		mutex_create(LATCH_ID_TRX_UNDO, &trx->undo_mutex);
 
 		lock_trx_alloc_locks(trx);
+
+		trx_orbit_delegate_t *delegate = (trx_orbit_delegate_t *)
+			orbit_pool_alloc(trx_ob_pool, sizeof(trx_orbit_delegate_t));
+		trx->lock.wait_lock = &delegate->wait_lock;
 	}
 
 	/** Release resources held by the transaction object.
@@ -285,7 +289,7 @@ struct TrxFactory {
 		ut_ad(!trx->in_rw_trx_list);
 		ut_ad(!trx->in_mysql_trx_list);
 
-		ut_a(trx->lock.wait_lock == NULL);
+		ut_a(*trx->lock.wait_lock == NULL);
 		ut_a(trx->lock.wait_thr == NULL);
 
 		ut_a(!trx->has_search_latch);
@@ -361,7 +365,7 @@ struct TrxFactory {
 		ut_ad(!trx->in_mysql_trx_list);
 
 		ut_a(trx->lock.wait_thr == NULL);
-		ut_a(trx->lock.wait_lock == NULL);
+		ut_a(*trx->lock.wait_lock == NULL);
 
 		ut_a(!trx->has_search_latch);
 
@@ -433,8 +437,8 @@ struct TrxPoolManagerLock {
 typedef Pool<trx_t, TrxFactory, TrxPoolLock> trx_pool_t;
 typedef PoolManager<trx_pool_t, TrxPoolManagerLock > trx_pools_t;
 // typedef int a_t[offsetof(trx_t, lock.deadlock_mark)]; // its offset is 112 bytes
-// a_t *a = (int(*)[1])NULL;
 // typedef int a_t[sizeof(trx_pool_t::Element)]; // its size is 872 bytes (trx_t is 864)
+// typedef int a_t[sizeof(trx_lock_t)]; // its size is 232 bytes
 // a_t *a = (int(*)[1])NULL;
 
 /** The trx_t pool manager */
@@ -451,7 +455,7 @@ orbit_pool *trx_ob_pool = orbit_pool_create(1024 * 1024 * 64);
 void
 trx_pool_init()
 {
-	trx_pools = UT_NEW_NOKEY(trx_pools_t(MAX_TRX_BLOCK_SIZE, trx_ob_pool));
+	trx_pools = UT_NEW_NOKEY(trx_pools_t(MAX_TRX_BLOCK_SIZE, NULL));
 
 	ut_a(trx_pools != 0);
 }
