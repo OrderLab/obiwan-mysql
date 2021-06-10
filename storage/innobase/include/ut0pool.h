@@ -132,7 +132,11 @@ struct Pool {
 		} else if (m_last < m_end) {
 
 			/* Initialise the remaining elements. */
-			init(m_end - m_last);
+			/* Note: this is a manual optimization for orbit,
+			 * but it may have side effect for original MySQL.
+			 * In some cases, user may prefer to pay initialization
+			 * cost of all remaining trx_t upfront. */
+			init(ut_min(size_t(16), size_t(m_end - m_start)));
 
 			ut_ad(!m_pqueue.empty());
 
