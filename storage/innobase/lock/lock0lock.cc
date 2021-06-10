@@ -519,7 +519,7 @@ lock_sys_create(
 
 	lock_sys->rec_hash = hash_create(n_cells, default_ob_pool);
 	lock_sys->prdt_hash = hash_create(n_cells, default_ob_pool);
-	lock_sys->prdt_page_hash = hash_create(n_cells, default_ob_pool);
+	lock_sys->prdt_page_hash = hash_create(n_cells);
 
 	if (!srv_read_only_mode) {
 		lock_latest_err_file = os_file_create_tmpfile(NULL);
@@ -563,10 +563,10 @@ lock_sys_resize(
 	hash_table_free(old_hash, default_ob_pool);
 
 	old_hash = lock_sys->prdt_page_hash;
-	lock_sys->prdt_page_hash = hash_create(n_cells, default_ob_pool);
+	lock_sys->prdt_page_hash = hash_create(n_cells);
 	HASH_MIGRATE(old_hash, lock_sys->prdt_page_hash, lock_t, hash,
 		     lock_rec_lock_fold);
-	hash_table_free(old_hash, default_ob_pool);
+	hash_table_free(old_hash);
 
 	/* need to update block->lock_hash_val */
 	for (ulint i = 0; i < srv_buf_pool_instances; ++i) {
@@ -609,7 +609,7 @@ lock_sys_close(void)
 
 	hash_table_free(lock_sys->rec_hash, default_ob_pool);
 	hash_table_free(lock_sys->prdt_hash, default_ob_pool);
-	hash_table_free(lock_sys->prdt_page_hash, default_ob_pool);
+	hash_table_free(lock_sys->prdt_page_hash);
 
 	os_event_destroy(lock_sys->timeout_event);
 
