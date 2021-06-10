@@ -81,7 +81,8 @@ static const ulint	REC_LOCK_CACHE = 1;
 // static const ulint	REC_LOCK_CACHE = 8;
 
 /** Maximum record lock size in bytes */
-static const ulint	REC_LOCK_SIZE = sizeof(ib_lock_t) + 256;
+static const ulint	REC_LOCK_SIZE = sizeof(ib_lock_t);
+static const ulint	REC_LOCK_BITMAP_SIZE = 256;
 
 /** Total number of cached table locks */
 static const ulint	TABLE_LOCK_CACHE = 1;
@@ -1033,7 +1034,7 @@ lock_rec_reset_nth_bit(
 	ut_ad(lock_get_type_low(lock) == LOCK_REC);
 	ut_ad(i < lock->un_member.rec_lock.n_bits);
 
-	byte*	b = reinterpret_cast<byte*>(&lock[1]) + (i >> 3);
+	byte*	b = reinterpret_cast<byte*>(lock->un_member.rec_lock.bits) + (i >> 3);
 	byte	mask = 1 << (i & 7);
 	byte	bit = *b & mask;
 	*b &= ~mask;
@@ -1104,7 +1105,7 @@ lock_rec_bitmap_reset(
 
 	ut_ad((lock_rec_get_n_bits(lock) % 8) == 0);
 
-	memset(&lock[1], 0, n_bytes);
+	memset(lock->un_member.rec_lock.bits, 0, n_bytes);
 }
 
 /*********************************************************************//**
@@ -1517,17 +1518,20 @@ RecLock::lock_alloc(
 	lock_t*	lock;
 
 	if (trx->lock.rec_cached >= trx->lock.rec_pool.size()
-	    || sizeof(*lock) + size > REC_LOCK_SIZE) {
+	    || size > REC_LOCK_BITMAP_SIZE) {
+	    // || sizeof(*lock) + size > REC_LOCK_SIZE) {
 
 		/* TODO: how can we use heap with internally buffer pool? */
-		ulint		n_bytes = size + sizeof(*lock);
+		//ulint		n_bytes = size + sizeof(*lock);
 		/* mem_heap_t*	heap = trx->lock.lock_heap;
 		lock = reinterpret_cast<lock_t*>(mem_heap_alloc(heap, n_bytes));
 		*/
 
 		obprintf(stderr, "Orbit allocating rec lock from orbit pool.\n");
 		lock = reinterpret_cast<lock_t*>(
-			orbit_pool_alloc(rec_lock_ob_pool, n_bytes));
+			orbit_pool_alloc(table_lock_ob_pool, sizeof(*lock)));
+		lock->un_member.rec_lock.bits = reinterpret_cast<byte*>(
+			orbit_pool_alloc(rec_lock_ob_pool, size));
 		obprintf(stderr, "Orbit allocated rec lock %p from pool\n", lock);
 	} else {
 
@@ -1557,7 +1561,7 @@ RecLock::lock_alloc(
 		ut_ad(8 * size < UINT32_MAX);
 		rec_lock.n_bits = static_cast<uint32_t>(8 * size);
 
-		memset(&lock[1], 0x0, size);
+		memset(lock->un_member.rec_lock.bits, 0x0, size);
 	}
 
 	rec_lock.space = rec_id.m_space_id;
@@ -2207,7 +2211,7 @@ lock_rec_has_to_wait_in_queue(
 	     lock != wait_lock;
 	     lock = lock_rec_get_next_on_page_const(lock)) {
 
-		const byte*	p = (const byte*) &lock[1];
+		const byte*	p = (const byte*) lock->un_member.rec_lock.bits;
 
 		if (heap_no < lock_rec_get_n_bits(lock)
 		    && (p[bit_offset] & bit_mask)
@@ -8307,14 +8311,21 @@ lock_trx_alloc_locks(trx_t* trx)
 	ulint	sz = REC_LOCK_SIZE * REC_LOCK_CACHE;
 	// byte*	ptr = reinterpret_cast<byte*>(ut_malloc_nokey(sz));
 	byte	*rec_ptr, *tbl_ptr;
-	byte*	ptr = reinterpret_cast<byte*>(orbit_pool_alloc(rec_lock_ob_pool, sz));
+	byte*	ptr = reinterpret_cast<byte*>(orbit_pool_alloc(table_lock_ob_pool, sz));
 	rec_ptr = ptr;
+
+	sz = REC_LOCK_BITMAP_SIZE * REC_LOCK_CACHE;
+	byte*	rec_bitmap = reinterpret_cast<byte*>(orbit_pool_alloc(rec_lock_ob_pool, sz));
 
 	/* We allocate one big chunk and then distribute it among
 	the rest of the elements. The allocated chunk pointer is always
 	at index 0. */
 
-	for (ulint i = 0; i < REC_LOCK_CACHE; ++i, ptr += REC_LOCK_SIZE) {
+	for (ulint i = 0; i < REC_LOCK_CACHE; ++i,
+		ptr += REC_LOCK_SIZE, rec_bitmap += REC_LOCK_BITMAP_SIZE)
+	{
+		ib_lock_t *lock = reinterpret_cast<ib_lock_t*>(ptr);
+		lock->un_member.rec_lock.bits = rec_bitmap;
 		trx->lock.rec_pool.push_back(
 			reinterpret_cast<ib_lock_t*>(ptr));
 	}
@@ -8332,4 +8343,12 @@ lock_trx_alloc_locks(trx_t* trx)
 #if OUTPUT_ORBIT_ALLOC
 	__mysql_trx_pool_relation(trx, rec_ptr, tbl_ptr);
 #endif
+}
+
+// This only frees rec bitmap
+void
+lock_trx_free_locks(trx_t* trx)
+{
+	orbit_pool_free(rec_lock_ob_pool,
+		trx->lock.rec_pool[0]->un_member.rec_lock.bits, 1);
 }

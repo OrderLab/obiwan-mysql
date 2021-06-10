@@ -305,6 +305,7 @@ struct TrxFactory {
 			mem_heap_free(trx->lock.lock_heap);
 			trx->lock.lock_heap = NULL;
 		}
+		// FIXME: non-cache locks in orbit pool should also be freed
 
 		ut_a(UT_LIST_GET_LEN(trx->lock.trx_locks) == 0);
 
@@ -324,7 +325,9 @@ struct TrxFactory {
 			/* See lock_trx_alloc_locks() why we only free
 			the first element. */
 
-			orbit_pool_free(rec_lock_ob_pool, trx->lock.rec_pool[0], 1);
+			// This only frees rec bitmap
+			lock_trx_free_locks(trx);
+			orbit_pool_free(table_lock_ob_pool, trx->lock.rec_pool[0], 1);
 			// ut_free(trx->lock.rec_pool[0]);
 		}
 
@@ -459,11 +462,18 @@ orbit_pool *default_ob_pool = orbit_pool_create_at(1024 * 1024 * 64, (void*)0x80
 orbit_pool *trx_ob_pool = orbit_pool_create_at(1024 * 1024 * 64, (void*)0x810000000UL);
 orbit_pool *rec_lock_ob_pool = orbit_pool_create_at(1024 * 1024 * 64, (void*)0x820000000UL);
 orbit_pool *table_lock_ob_pool = orbit_pool_create_at(1024 * 1024 * 64, (void*)0x830000000UL);
-#elif 1
+#elif 0
 orbit_pool *default_ob_pool;
 orbit_pool *trx_ob_pool = orbit_pool_create_at(1024 * 1024 * 64, (void*)0x810000000UL);
 orbit_pool *rec_lock_ob_pool;
 orbit_pool *table_lock_ob_pool = default_ob_pool = rec_lock_ob_pool = orbit_pool_create_at(1024 * 1024 * 64, (void*)0x830000000UL);
+#elif 1
+orbit_pool *default_ob_pool = rec_lock_ob_pool = orbit_pool_create_at(1024 * 1024 * 64, (void*)0x810000000UL);
+orbit_pool *trx_ob_pool = table_lock_ob_pool = orbit_pool_create_at(1024 * 1024 * 64, (void*)0x820000000UL);
+orbit_pool *rec_lock_ob_pool;
+orbit_pool *table_lock_ob_pool;
+bool cow0 = trx_ob_pool->cow = false;
+bool cow1 = default_ob_pool->cow = true;
 #else
 orbit_pool *default_ob_pool;
 orbit_pool *trx_ob_pool;
