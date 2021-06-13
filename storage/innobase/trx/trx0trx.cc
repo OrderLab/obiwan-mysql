@@ -272,9 +272,7 @@ struct TrxFactory {
 			trx->trx_savepoints,
 			&trx_named_savept_t::trx_savepoints);
 
-		trx->mutex = reinterpret_cast<TrxMutex*>(
-			ut_malloc_nokey(sizeof(*trx->mutex)));
-		mutex_create(LATCH_ID_TRX, trx->mutex);
+		mutex_create(LATCH_ID_TRX, &trx->mutex);
 		mutex_create(LATCH_ID_TRX_UNDO, &trx->undo_mutex);
 
 		lock_trx_alloc_locks(trx);
@@ -312,9 +310,8 @@ struct TrxFactory {
 		UT_DELETE(trx->xid);
 		ut_free(trx->detailed_error);
 
-		mutex_free(trx->mutex);
+		mutex_free(&trx->mutex);
 		mutex_free(&trx->undo_mutex);
-		ut_free(trx->mutex);
 
 		trx->mod_tables.~trx_mod_tables_t();
 
@@ -453,8 +450,7 @@ typedef PoolManager<trx_pool_t, TrxPoolManagerLock > trx_pools_t;
 static trx_pools_t* trx_pools;
 
 /** Size of on trx_t pool in bytes. */
-static const ulint MAX_TRX_BLOCK_SIZE = 1024 * 512;
-// static const ulint MAX_TRX_BLOCK_SIZE = 1024 * 1024 * 4;
+static const ulint MAX_TRX_BLOCK_SIZE = 1024 * 1024 * 4;
 
 // default 64M
 #if 0

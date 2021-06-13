@@ -499,13 +499,9 @@ lock_sys_create(
 
 	lock_sys->last_slot = lock_sys->waiting_threads;
 
-	lock_sys->mutex = reinterpret_cast<LockMutex*>(
-		ut_malloc_nokey(sizeof(*lock_sys->mutex)));
-	mutex_create(LATCH_ID_LOCK_SYS, lock_sys->mutex);
+	mutex_create(LATCH_ID_LOCK_SYS, &lock_sys->mutex);
 
-	lock_sys->wait_mutex = reinterpret_cast<LockMutex*>(
-		ut_malloc_nokey(sizeof(*lock_sys->wait_mutex)));
-	mutex_create(LATCH_ID_LOCK_SYS_WAIT, lock_sys->wait_mutex);
+	mutex_create(LATCH_ID_LOCK_SYS_WAIT, &lock_sys->wait_mutex);
 
 	lock_sys->timeout_event = os_event_create(0);
 
@@ -605,10 +601,8 @@ lock_sys_close(void)
 
 	os_event_destroy(lock_sys->timeout_event);
 
-	mutex_destroy(lock_sys->mutex);
-	mutex_destroy(lock_sys->wait_mutex);
-	ut_free(lock_sys->mutex);
-	ut_free(lock_sys->wait_mutex);
+	mutex_destroy(&lock_sys->mutex);
+	mutex_destroy(&lock_sys->wait_mutex);
 
 	srv_slot_t*	slot = lock_sys->waiting_threads;
 

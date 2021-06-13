@@ -1019,7 +1019,7 @@ struct lock_sys_t{
 						memory update hotspots from
 						residing on the same memory
 						cache line */
-	LockMutex*	mutex;			/*!< Mutex protecting the
+	LockMutex	mutex;			/*!< Mutex protecting the
 						locks */
 	hash_table_t*	rec_hash;		/*!< hash table of the record
 						locks */
@@ -1029,7 +1029,7 @@ struct lock_sys_t{
 						lock */
 
 	char		pad2[CACHE_LINE_SIZE];	/*!< Padding */
-	LockMutex*	wait_mutex;		/*!< Mutex protecting the
+	LockMutex	wait_mutex;		/*!< Mutex protecting the
 						next two fields */
 	srv_slot_t*	waiting_threads;	/*!< Array  of user threads
 						suspended while waiting for
@@ -1116,14 +1116,14 @@ extern lock_sys_t*	lock_sys;
 
 /** Test if lock_sys->mutex can be acquired without waiting. */
 #define lock_mutex_enter_nowait() 		\
-	(lock_sys->mutex->trylock(__FILE__, __LINE__))
+	(lock_sys->mutex.trylock(__FILE__, __LINE__))
 
 /** Test if lock_sys->mutex is owned. */
-#define lock_mutex_own() (lock_sys->mutex->is_owned())
+#define lock_mutex_own() (lock_sys->mutex.is_owned())
 
 /** Acquire the lock_sys->mutex. */
 #define lock_mutex_enter() do {			\
-	mutex_enter(lock_sys->mutex);		\
+	mutex_enter(&lock_sys->mutex);		\
 	holder_file = __FILE__;			\
 	holder_line = __LINE__;			\
 } while (0)
@@ -1132,20 +1132,20 @@ extern lock_sys_t*	lock_sys;
 #define lock_mutex_exit() do {			\
 	holder_file = __FILE__;			\
 	holder_line = __LINE__;			\
-	lock_sys->mutex->exit();		\
+	lock_sys->mutex.exit();			\
 } while (0)
 
 /** Test if lock_sys->wait_mutex is owned. */
-#define lock_wait_mutex_own() (lock_sys->wait_mutex->is_owned())
+#define lock_wait_mutex_own() (lock_sys->wait_mutex.is_owned())
 
 /** Acquire the lock_sys->wait_mutex. */
 #define lock_wait_mutex_enter() do {		\
-	mutex_enter(lock_sys->wait_mutex);	\
+	mutex_enter(&lock_sys->wait_mutex);	\
 } while (0)
 
 /** Release the lock_sys->wait_mutex. */
 #define lock_wait_mutex_exit() do {		\
-	lock_sys->wait_mutex->exit();		\
+	lock_sys->wait_mutex.exit();		\
 } while (0)
 
 #ifndef UNIV_NONINL
