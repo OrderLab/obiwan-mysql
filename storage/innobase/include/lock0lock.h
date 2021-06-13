@@ -1015,7 +1015,7 @@ struct lock_sys_t{
 						memory update hotspots from
 						residing on the same memory
 						cache line */
-	LockMutex	mutex;			/*!< Mutex protecting the
+	LockMutex&	mutex;			/*!< Mutex protecting the
 						locks */
 	hash_table_t*	rec_hash;		/*!< hash table of the record
 						locks */
@@ -1025,7 +1025,7 @@ struct lock_sys_t{
 						lock */
 
 	char		pad2[CACHE_LINE_SIZE];	/*!< Padding */
-	LockMutex	wait_mutex;		/*!< Mutex protecting the
+	LockMutex&	wait_mutex;		/*!< Mutex protecting the
 						next two fields */
 	srv_slot_t*	waiting_threads;	/*!< Array  of user threads
 						suspended while waiting for
@@ -1050,6 +1050,16 @@ struct lock_sys_t{
 
 	bool		timeout_thread_active;	/*!< True if the timeout thread
 						is running */
+
+	/** Constructor to only set up two mutex references.
+	Only for lock_sys_create internal use.
+	Used lock_sys_create instead to initialize lock_sys. */
+	lock_sys_t();
+
+	/** Destructor to only destory two mutexes.
+	Only for lock_sys_close internal use.
+	Used lock_sys_close instead to destroy lock_sys. */
+	~lock_sys_t();
 };
 
 /*********************************************************************//**
