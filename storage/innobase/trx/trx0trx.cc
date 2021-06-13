@@ -276,10 +276,6 @@ struct TrxFactory {
 		mutex_create(LATCH_ID_TRX_UNDO, &trx->undo_mutex);
 
 		lock_trx_alloc_locks(trx);
-
-		trx_orbit_delegate_t *delegate = (trx_orbit_delegate_t *)
-			orbit_pool_alloc(trx_ob_pool, sizeof(trx_orbit_delegate_t));
-		trx->lock.wait_lock = &delegate->wait_lock;
 	}
 
 	/** Release resources held by the transaction object.
@@ -290,7 +286,7 @@ struct TrxFactory {
 		ut_ad(!trx->in_rw_trx_list);
 		ut_ad(!trx->in_mysql_trx_list);
 
-		ut_a(*trx->lock.wait_lock == NULL);
+		ut_a(trx->lock.wait_lock == NULL);
 		ut_a(trx->lock.wait_thr == NULL);
 
 		ut_a(!trx->has_search_latch);
@@ -370,7 +366,7 @@ struct TrxFactory {
 		ut_ad(!trx->in_mysql_trx_list);
 
 		ut_a(trx->lock.wait_thr == NULL);
-		ut_a(*trx->lock.wait_lock == NULL);
+		ut_a(trx->lock.wait_lock == NULL);
 
 		ut_a(!trx->has_search_latch);
 
@@ -481,7 +477,7 @@ orbit_pool *table_lock_ob_pool = default_ob_pool = trx_ob_pool = rec_lock_ob_poo
 void
 trx_pool_init()
 {
-	trx_pools = UT_NEW_NOKEY(trx_pools_t(MAX_TRX_BLOCK_SIZE, NULL));
+	trx_pools = UT_NEW_NOKEY(trx_pools_t(MAX_TRX_BLOCK_SIZE, trx_ob_pool));
 
 	ut_a(trx_pools != 0);
 }

@@ -480,7 +480,7 @@ fill_trx_row(
 	ut_ad(requested_lock_row == NULL
 	      || i_s_locks_row_validate(requested_lock_row));
 
-	if (*trx->lock.wait_lock != NULL) {
+	if (trx->lock.wait_lock != NULL) {
 
 		ut_a(requested_lock_row != NULL);
 		row->trx_wait_started = (ib_time_t) trx->lock.wait_started;
@@ -1139,14 +1139,14 @@ add_trx_relevant_locks_to_cache(
 		i_s_locks_row_t*	blocking_lock_row;
 		lock_queue_iterator_t	iter;
 
-		ut_a(*trx->lock.wait_lock != NULL);
+		ut_a(trx->lock.wait_lock != NULL);
 
 		wait_lock_heap_no
-			= wait_lock_get_heap_no(*trx->lock.wait_lock);
+			= wait_lock_get_heap_no(trx->lock.wait_lock);
 
 		/* add the requested lock */
 		*requested_lock_row
-			= add_lock_to_cache(cache, *trx->lock.wait_lock,
+			= add_lock_to_cache(cache, trx->lock.wait_lock,
 					    wait_lock_heap_no);
 
 		/* memory could not be allocated */
@@ -1158,18 +1158,18 @@ add_trx_relevant_locks_to_cache(
 		/* then iterate over the locks before the wait lock and
 		add the ones that are blocking it */
 
-		lock_queue_iterator_reset(&iter, *trx->lock.wait_lock,
+		lock_queue_iterator_reset(&iter, trx->lock.wait_lock,
 					  ULINT_UNDEFINED);
 
 		for (curr_lock = lock_queue_iterator_get_prev(&iter);
 		     curr_lock != NULL;
 		     curr_lock = lock_queue_iterator_get_prev(&iter)) {
 
-			if (lock_has_to_wait(*trx->lock.wait_lock,
+			if (lock_has_to_wait(trx->lock.wait_lock,
 					     curr_lock)) {
 
 				/* add the lock that is
-				blocking *trx->lock.wait_lock */
+				blocking trx->lock.wait_lock */
 				blocking_lock_row
 					= add_lock_to_cache(
 						cache, curr_lock,

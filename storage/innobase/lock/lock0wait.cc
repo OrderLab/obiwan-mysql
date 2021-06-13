@@ -263,7 +263,7 @@ lock_wait_suspend_thread(
 
 	lock_mutex_enter();
 
-	if (const lock_t* wait_lock = *trx->lock.wait_lock) {
+	if (const lock_t* wait_lock = trx->lock.wait_lock) {
 		lock_type = lock_get_type_low(wait_lock);
 	}
 
@@ -452,11 +452,11 @@ lock_wait_check_and_cancel(
 
 		trx_mutex_enter(trx);
 
-		if (*trx->lock.wait_lock != NULL && !trx_is_high_priority(trx)) {
+		if (trx->lock.wait_lock != NULL && !trx_is_high_priority(trx)) {
 
 			ut_a(trx->lock.que_state == TRX_QUE_LOCK_WAIT);
 
-			lock_cancel_waiting_and_release(*trx->lock.wait_lock);
+			lock_cancel_waiting_and_release(trx->lock.wait_lock);
 		}
 
 		lock_mutex_exit();
