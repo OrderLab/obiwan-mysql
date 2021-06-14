@@ -7999,14 +7999,14 @@ void *checker_wait_func(void *aux)
 
 		do {
 			union orbit_result result;
-			fprintf(stderr, "before recvv\n");
+			obprintf(stderr, "before recvv\n");
 			int ret = orbit_recvv(&result, &task);
 			if (ret == -1) {
 				int err = errno;
 				fprintf(stderr, "get error: %s\n", strerror(err));
 				abort();
 			}
-			fprintf(stderr, "orbit_recvv returns %d\n", ret);
+			obprintf(stderr, "orbit_recvv returns %d\n", ret);
 
 			if (ret == 0)
 				break;
