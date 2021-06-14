@@ -346,8 +346,6 @@ struct TrxFactory {
 			// ut_free(trx->lock.table_pool[0]);
 		}
 
-		orbit_pool_free(trx_ob_pool, trx->lock.wait_lock, 1);
-
 		/* trx->lock.rec_pool.~lock_pool_t();
 
 		trx->lock.table_pool.~lock_pool_t();
