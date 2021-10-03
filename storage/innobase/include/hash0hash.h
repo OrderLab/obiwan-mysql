@@ -70,7 +70,7 @@ hash_table_t*
 hash_create(
 /*========*/
 	ulint	n,	/*!< in: number of array cells */
-	orbit_pool	*ob_pool = NULL);
+	orbit_allocator	*oballoc = NULL);
 #ifndef UNIV_HOTBACKUP
 /*************************************************************//**
 Creates a sync object array array to protect a hash table.
@@ -93,7 +93,7 @@ void
 hash_table_free(
 /*============*/
 	hash_table_t*	table,	/*!< in, own: hash table */
-	orbit_pool*	ob_pool = NULL);
+	orbit_allocator*	oballoc = NULL);
 /**************************************************************//**
 Calculates the hash value from a folded value.
 @return hashed value */

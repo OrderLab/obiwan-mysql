@@ -118,7 +118,7 @@ private:
 		const lock_t*	lock,
 		trx_t*		trx);
 
-	static unsigned long check_and_resolve_inner_orbit(void *aux);
+	static unsigned long check_and_resolve_inner_orbit(void *store, void *argbuf);
 
 private:
 	/** Do a shallow copy. Default destructor OK.
@@ -464,6 +464,10 @@ lock_sec_rec_cons_read_sees(
 }
 
 // TODO: one pool per type of object
+extern orbit_allocator *default_oballoc;
+extern orbit_allocator *trx_oballoc;
+extern orbit_allocator *rec_lock_oballoc;
+extern orbit_allocator *table_lock_oballoc;
 extern orbit_pool *default_ob_pool;
 extern orbit_pool *trx_ob_pool;
 extern orbit_pool *rec_lock_ob_pool;
@@ -502,7 +506,7 @@ lock_sys_create(
 	lock_sys_sz = sizeof(*lock_sys);
 
 	lock_sys = static_cast<lock_sys_t*>(
-			orbit_pool_alloc(default_ob_pool, lock_sys_sz));
+			orbit_alloc(default_oballoc, lock_sys_sz));
 	new(lock_sys) lock_sys_t();
 
 	void*	ptr = malloc(OS_THREAD_MAX_N * sizeof(srv_slot_t));
@@ -517,8 +521,8 @@ lock_sys_create(
 
 	lock_sys->timeout_event = os_event_create(0);
 
-	lock_sys->rec_hash = hash_create(n_cells, default_ob_pool);
-	lock_sys->prdt_hash = hash_create(n_cells, default_ob_pool);
+	lock_sys->rec_hash = hash_create(n_cells, default_oballoc);
+	lock_sys->prdt_hash = hash_create(n_cells, default_oballoc);
 	lock_sys->prdt_page_hash = hash_create(n_cells);
 
 	if (!srv_read_only_mode) {
@@ -551,16 +555,16 @@ lock_sys_resize(
 	lock_mutex_enter();
 
 	old_hash = lock_sys->rec_hash;
-	lock_sys->rec_hash = hash_create(n_cells, default_ob_pool);
+	lock_sys->rec_hash = hash_create(n_cells, default_oballoc);
 	HASH_MIGRATE(old_hash, lock_sys->rec_hash, lock_t, hash,
 		     lock_rec_lock_fold);
-	hash_table_free(old_hash, default_ob_pool);
+	hash_table_free(old_hash, default_oballoc);
 
 	old_hash = lock_sys->prdt_hash;
-	lock_sys->prdt_hash = hash_create(n_cells, default_ob_pool);
+	lock_sys->prdt_hash = hash_create(n_cells, default_oballoc);
 	HASH_MIGRATE(old_hash, lock_sys->prdt_hash, lock_t, hash,
 		     lock_rec_lock_fold);
-	hash_table_free(old_hash, default_ob_pool);
+	hash_table_free(old_hash, default_oballoc);
 
 	old_hash = lock_sys->prdt_page_hash;
 	lock_sys->prdt_page_hash = hash_create(n_cells);
@@ -607,8 +611,8 @@ lock_sys_close(void)
 		lock_latest_err_file = NULL;
 	}
 
-	hash_table_free(lock_sys->rec_hash, default_ob_pool);
-	hash_table_free(lock_sys->prdt_hash, default_ob_pool);
+	hash_table_free(lock_sys->rec_hash, default_oballoc);
+	hash_table_free(lock_sys->prdt_hash, default_oballoc);
 	hash_table_free(lock_sys->prdt_page_hash);
 
 	os_event_destroy(lock_sys->timeout_event);
@@ -626,7 +630,7 @@ lock_sys_close(void)
 
 	lock_sys->~lock_sys_t();
 
-	orbit_pool_free(default_ob_pool, lock_sys, 1);
+	orbit_free(default_oballoc, lock_sys);
 	// ut_free(lock_sys);
 
 	lock_sys = NULL;
@@ -1537,9 +1541,9 @@ RecLock::lock_alloc(
 
 		obprintf(stderr, "Orbit allocating rec lock from orbit pool.\n");
 		lock = reinterpret_cast<lock_t*>(
-			orbit_pool_alloc(table_lock_ob_pool, sizeof(*lock)));
+			orbit_alloc(table_lock_oballoc, sizeof(*lock)));
 		lock->un_member.rec_lock.bits = reinterpret_cast<byte*>(
-			orbit_pool_alloc(rec_lock_ob_pool, size));
+			orbit_alloc(rec_lock_oballoc, size));
 		obprintf(stderr, "Orbit allocated rec lock %p from pool\n", lock);
 	} else {
 
@@ -3825,7 +3829,7 @@ lock_table_create(
 
 		obprintf(stderr, "Orbit allocating table lock from orbit pool.\n");
 		lock = reinterpret_cast<lock_t*>(
-			orbit_pool_alloc(table_lock_ob_pool, sizeof(*lock)));
+			orbit_alloc(table_lock_oballoc, sizeof(*lock)));
 		obprintf(stderr, "Orbit allocated table lock %p from pool\n", lock);
 
 		/* lock = static_cast<lock_t*>(
@@ -7866,8 +7870,8 @@ DeadlockChecker::trx_rollback(orbit_scratch *scratch, trx_t *victim_trx)
 }
 
 orbit_scratch dld_scratch;
-int scratch_init = orbit_scratch_create(&dld_scratch, 1024 * 1024);
-bool first_scratch = true;
+orbit_pool *scratch_pool = orbit_pool_create(NULL, 64 * 1024 * 1024);
+int scratch_init = orbit_scratch_set_pool(scratch_pool);
 
 const trx_t*
 DeadlockChecker::check_and_resolve_inner(const lock_t* lock, trx_t* trx)
@@ -7899,11 +7903,7 @@ DeadlockChecker::check_and_resolve_inner(const lock_t* lock, trx_t* trx)
 		} else if (victim_trx != NULL) {
 			ut_ad(victim_trx == checker.m_wait_lock->trx);
 
-			/* FIXME: fix this hack */
-			if (first_scratch)
-				first_scratch = false;
-			else
-				orbit_scratch_create(&dld_scratch, 1024 * 1024);
+			orbit_scratch_create(&dld_scratch);
 
 			/* fprintf(stderr, "in checker before rollback sleeping 2s\n");
 			sleep(2); */
@@ -7933,10 +7933,10 @@ DeadlockChecker::check_and_resolve_inner(const lock_t* lock, trx_t* trx)
 }
 
 unsigned long
-DeadlockChecker::check_and_resolve_inner_orbit(void *aux)
+DeadlockChecker::check_and_resolve_inner_orbit(void *store, void *argbuf)
 {
 	return 0;
-	orbit_args *args = (orbit_args*)aux;
+	orbit_args *args = (orbit_args*)argbuf;
 	obprintf(stderr, "in checker args = %p\n", args);
 	return (unsigned long)check_and_resolve_inner(args->lock, args->trx);
 }
@@ -8063,7 +8063,7 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 	const trx_t*	victim_trx;
 
 	static orbit_module *dld_ob = orbit_create("DL CK",
-						check_and_resolve_inner_orbit);
+		check_and_resolve_inner_orbit, NULL);
 
 	// victim_trx = check_and_resolve_inner(lock, trx);
 	orbit_args args = { .lock = lock, .trx = trx, };
@@ -8072,7 +8072,7 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 	orbit_task task;
 	orbit_pool *pools[] = { default_ob_pool, trx_ob_pool, };
 	int ret = orbit_call_async(dld_ob, 0, sizeof(pools)/sizeof(*pools),
-			pools, &args, sizeof(args), &task);
+			pools, NULL, &args, sizeof(args), &task);
 	obprintf(stderr, "orbit_call_async returns %d\n", ret);
 	if (ret != 0) abort();
 
@@ -8131,10 +8131,10 @@ lock_trx_alloc_locks(trx_t* trx)
 {
 	ulint	sz = REC_LOCK_SIZE * REC_LOCK_CACHE;
 	// byte*	ptr = reinterpret_cast<byte*>(ut_malloc_nokey(sz));
-	byte*	ptr = reinterpret_cast<byte*>(orbit_pool_alloc(table_lock_ob_pool, sz));
+	byte*	ptr = reinterpret_cast<byte*>(orbit_alloc(table_lock_oballoc, sz));
 
 	sz = REC_LOCK_BITMAP_SIZE * REC_LOCK_CACHE;
-	byte*	rec_bitmap = reinterpret_cast<byte*>(orbit_pool_alloc(rec_lock_ob_pool, sz));
+	byte*	rec_bitmap = reinterpret_cast<byte*>(orbit_alloc(rec_lock_oballoc, sz));
 
 	/* We allocate one big chunk and then distribute it among
 	the rest of the elements. The allocated chunk pointer is always
@@ -8151,7 +8151,7 @@ lock_trx_alloc_locks(trx_t* trx)
 
 	sz = TABLE_LOCK_SIZE * TABLE_LOCK_CACHE;
 	// ptr = reinterpret_cast<byte*>(ut_malloc_nokey(sz));
-	ptr = reinterpret_cast<byte*>(orbit_pool_alloc(table_lock_ob_pool, sz));
+	ptr = reinterpret_cast<byte*>(orbit_alloc(table_lock_oballoc, sz));
 
 	for (ulint i = 0; i < TABLE_LOCK_CACHE; ++i, ptr += TABLE_LOCK_SIZE) {
 		trx->lock.table_pool.push_back(
@@ -8164,6 +8164,6 @@ lock_trx_alloc_locks(trx_t* trx)
 void
 lock_trx_free_locks(trx_t* trx)
 {
-	orbit_pool_free(rec_lock_ob_pool,
-		trx->lock.rec_pool[0]->un_member.rec_lock.bits, 1);
+	orbit_free(rec_lock_oballoc,
+		trx->lock.rec_pool[0]->un_member.rec_lock.bits);
 }

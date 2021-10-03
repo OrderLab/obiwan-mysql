@@ -83,7 +83,6 @@ SET(INNOBASE_SOURCES
 	lock/lock0prdt.cc
 	lock/lock0lock.cc
 	lock/lock0wait.cc
-	lock/orbit.c
 	log/log0log.cc
 	log/log0recv.cc
 	mach/mach0data.cc
@@ -165,7 +164,7 @@ ENDIF()
 MYSQL_ADD_PLUGIN(innobase ${INNOBASE_SOURCES} STORAGE_ENGINE
   MANDATORY
   MODULE_OUTPUT_NAME ha_innodb
-  LINK_LIBRARIES ${ZLIB_LIBRARY} ${LZ4_LIBRARY} ${NUMA_LIBRARY})
+  LINK_LIBRARIES orbit ${ZLIB_LIBRARY} ${LZ4_LIBRARY} ${NUMA_LIBRARY})
 
 # Remove -DMYSQL_SERVER, it breaks embedded build
 SET_TARGET_PROPERTIES(innobase PROPERTIES COMPILE_DEFINITIONS "")

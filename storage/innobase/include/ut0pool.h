@@ -62,13 +62,13 @@ struct Pool {
 
 	/** Constructor
 	@param size size of the memory block */
-	Pool(size_t size, orbit_pool *ob_pool)
+	Pool(size_t size, orbit_allocator *oballoc)
 		:
 		m_end(),
 		m_start(),
 		m_size(size),
 		m_last(),
-		m_ob_pool(ob_pool)
+		m_oballoc(oballoc)
 	{
 		ut_a(size >= sizeof(Element));
 
@@ -76,9 +76,9 @@ struct Pool {
 
 		ut_a(m_start == 0);
 
-		if (m_ob_pool)
+		if (m_oballoc)
 			m_start = reinterpret_cast<Element*>(
-				orbit_pool_alloc(m_ob_pool, m_size));
+				orbit_alloc(m_oballoc, m_size));
 		else
 			m_start = reinterpret_cast<Element*>(
 				ut_zalloc_nokey(m_size));
@@ -108,8 +108,8 @@ struct Pool {
 			Factory::destroy(&elem->m_type);
 		}
 
-		if (m_ob_pool)
-			orbit_pool_free(m_ob_pool, m_start, m_size);
+		if (m_oballoc)
+			orbit_free(m_oballoc, m_start);
 		else
 			ut_free(m_start);
 		m_end = m_last = m_start = 0;
@@ -226,7 +226,7 @@ private:
 	/** Lock strategy to use */
 	LockStrategy		m_lock_strategy;
 
-	orbit_pool*		m_ob_pool;
+	orbit_allocator*		m_oballoc;
 };
 
 template <typename Pool, typename LockStrategy>
@@ -235,10 +235,10 @@ struct PoolManager {
 	typedef Pool PoolType;
 	typedef typename PoolType::value_type value_type;
 
-	PoolManager(size_t size, orbit_pool *ob_pool)
+	PoolManager(size_t size, orbit_allocator *oballoc)
 		:
 		m_size(size),
-		m_ob_pool(ob_pool)
+		m_oballoc(oballoc)
 	{
 		create();
 	}
@@ -328,7 +328,7 @@ private:
 
 			ut_ad(n_pools == m_pools.size());
 
-			pool = UT_NEW_NOKEY(PoolType(m_size, m_ob_pool));
+			pool = UT_NEW_NOKEY(PoolType(m_size, m_oballoc));
 
 			if (pool != NULL) {
 
@@ -391,7 +391,7 @@ private:
 	/** Lock strategy to use */
 	LockStrategy		m_lock_strategy;
 
-	orbit_pool*		m_ob_pool;
+	orbit_allocator*		m_oballoc;
 };
 
 #endif /* ut0pool_h */
