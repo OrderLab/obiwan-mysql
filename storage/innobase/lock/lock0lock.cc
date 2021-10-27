@@ -111,12 +111,12 @@ public:
 private:
 	struct orbit_args {
 		const lock_t* lock;
-		trx_t* trx;
+		trx_delegate_t* trx;
 	};
 
 	static const trx_t* check_and_resolve_inner(
 		const lock_t*	lock,
-		trx_t*		trx);
+		trx_delegate_t*	trx);
 
 	static unsigned long check_and_resolve_inner_orbit(void *store, void *argbuf);
 
@@ -126,7 +126,7 @@ private:
 	@param wait_lock lock that a transaction wants
 	@param mark_start visited node counter */
 	DeadlockChecker(
-		const trx_t*	trx,
+		const trx_delegate_t*	trx,
 		const lock_t*	wait_lock,
 		ib_uint64_t	mark_start)
 		:
@@ -191,7 +191,7 @@ private:
 	@return true if the node has been visited */
 	bool is_visited(const lock_t* lock) const
 	{
-		return(lock->trx->lock.deadlock_mark > m_mark_start);
+		return(lock->__trx_delegate->lock.deadlock_mark > m_mark_start);
 	}
 
 	/** Get the next lock in the queue that is owned by a transaction
@@ -227,16 +227,16 @@ private:
 
 	/** Select the victim transaction that should be rolledback.
 	@return victim transaction */
-	const trx_t* select_victim() const;
+	const trx_delegate_t* select_victim() const;
 
 	/** Rollback transaction selected as the victim. */
-	void trx_rollback(orbit_scratch *scratch = NULL, trx_t *victim = NULL);
+	void trx_rollback(orbit_scratch *scratch = NULL, trx_delegate_t *victim = NULL);
 
 	/** Looks iteratively for a deadlock. Note: the joining transaction
 	may have been granted its lock by the deadlock checks.
 
 	@return 0 if no deadlock else the victim transaction.*/
-	const trx_t* search();
+	const trx_delegate_t* search();
 
 	/** Print transaction data to the deadlock file and possibly to stderr.
 	@param trx transaction
@@ -277,7 +277,7 @@ private:
 
 	/** Joining transaction that is requesting a lock in an
 	incompatible mode */
-	const trx_t*		m_start;
+	const trx_delegate_t*		m_start;
 
 	/** TRUE if search was too deep and was aborted */
 	bool			m_too_deep;
@@ -828,12 +828,12 @@ lock_reset_lock_and_trx_wait_orbit(
 	lock_t*	lock,	/*!< in/out: record lock */
 	orbit_scratch *scratch)
 {
-	ut_ad(lock->trx->lock.wait_lock == lock);
+	ut_ad(lock->__trx_delegate->lock.wait_lock == lock);
 	ut_ad(lock_get_wait(lock));
 	ut_ad(lock_mutex_own());
 
 	// lock->trx->lock.wait_lock = NULL;
-	orbit_update(scratch, lock->trx->lock.wait_lock, NULL);
+	orbit_update(scratch, lock->__trx_delegate->lock.wait_lock, NULL);
 
 	// lock->type_mode &= ~LOCK_WAIT;
 	orbit_update(scratch, lock->type_mode, lock->type_mode & ~LOCK_WAIT);
@@ -1552,6 +1552,7 @@ RecLock::lock_alloc(
 	}
 
 	lock->trx = trx;
+	lock->__trx_delegate = trx->orbit_trx_delegate();
 
 	lock->index = index;
 
@@ -2043,6 +2044,12 @@ lock_rec_lock_fast(
 		}
 
 		trx_mutex_exit(trx);
+	}
+
+	/* Orbit task cancellation */
+	if (status == LOCK_REC_SUCCESS_CREATED && trx->has_orbit) {
+		orbit_cancel_by_task(&trx->dl_ck_task);
+		trx->has_orbit = false;
 	}
 
 	return(status);
@@ -3839,6 +3846,7 @@ lock_table_create(
 
 	lock->type_mode = ib_uint32_t(type_mode | LOCK_TABLE);
 	lock->trx = trx;
+	lock->__trx_delegate = trx->orbit_trx_delegate();
 
 	lock->un_member.tab_lock.table = table;
 
@@ -6971,7 +6979,7 @@ lock_cancel_waiting_and_release_orbit(
 	ut_ad(trx_mutex_own(lock->trx));
 
 	// lock->trx->lock.cancel = true;
-	orbit_update(scratch, lock->trx->lock.cancel, true);
+	orbit_update(scratch, lock->__trx_delegate->lock.cancel, true);
 
 	unsigned long args[] = {(unsigned long)lock};
 
@@ -6984,7 +6992,7 @@ lock_cancel_waiting_and_release_orbit(
 	} else {
 		ut_ad(lock_get_type_low(lock) & LOCK_TABLE);
 
-		if (lock->trx->autoinc_locks != NULL) {
+		if (lock->__trx_delegate->autoinc_locks != NULL) {
 			/* Release the transaction's AUTOINC locks. */
 
 			// lock_release_autoinc_locks(lock->trx);
@@ -7012,7 +7020,7 @@ lock_cancel_waiting_and_release_orbit(
 		1, args);
 
 	// lock->trx->lock.cancel = false;
-	orbit_update(scratch, lock->trx->lock.cancel, false);
+	orbit_update(scratch, lock->__trx_delegate->lock.cancel, false);
 }
 
 
@@ -7647,15 +7655,15 @@ DeadlockChecker::notify(const lock_t* lock) const
 
 /** Select the victim transaction that should be rolledback.
 @return victim transaction */
-const trx_t*
+const trx_delegate_t*
 DeadlockChecker::select_victim() const
 {
 	ut_ad(lock_mutex_own());
 	ut_ad(m_start->lock.wait_lock != 0);
 	ut_ad(m_wait_lock->trx != m_start);
 
-	// TODO: current checker cannot access thd
-	if (0 && (thd_trx_priority(m_start->mysql_thd) > 0
+	// FIXME: current checker cannot access thd
+	/* if (0 && (thd_trx_priority(m_start->mysql_thd) > 0
 	    || thd_trx_priority(m_wait_lock->trx->mysql_thd) > 0)) {
 
 		const trx_t*	victim;
@@ -7666,10 +7674,11 @@ DeadlockChecker::select_victim() const
 
 			return(victim);
 		}
-	}
+	} */
 
+	// FIXME: current checker cannot access thd
 	// if (0 && trx_weight_ge(m_wait_lock->trx, m_start)) {
-	if (TRX_WEIGHT(m_wait_lock->trx) >= TRX_WEIGHT(m_start)) {
+	if (TRX_WEIGHT(m_wait_lock->__trx_delegate) >= TRX_WEIGHT(m_start)) {
 
 		/* The joining transaction is 'smaller',
 		choose it as the victim and roll it back. */
@@ -7677,13 +7686,13 @@ DeadlockChecker::select_victim() const
 		return(m_start);
 	}
 
-	return(m_wait_lock->trx);
+	return(m_wait_lock->__trx_delegate);
 }
 
 /** Looks iteratively for a deadlock. Note: the joining transaction may
 have been granted its lock by the deadlock checks.
 @return 0 if no deadlock else the victim transaction instance.*/
-const trx_t*
+const trx_delegate_t*
 DeadlockChecker::search()
 {
 	ut_ad(lock_mutex_own());
@@ -7692,8 +7701,8 @@ DeadlockChecker::search()
 	ut_ad(m_start != NULL);
 	ut_ad(m_wait_lock != NULL);
 	obprintf(stderr, "m_wait_lock->trx->state = %d, %p\n",
-		m_wait_lock->trx->state, &m_wait_lock->trx->state);
-	check_trx_state(m_wait_lock->trx);
+		m_wait_lock->__trx_delegate->state, &m_wait_lock->__trx_delegate->state);
+	check_trx_state(m_wait_lock->__trx_delegate);
 	ut_ad(m_mark_start <= s_lock_mark_counter);
 
 	/* Look at the locks ahead of wait_lock in the lock queue. */
@@ -7719,9 +7728,9 @@ DeadlockChecker::search()
 		} else if (lock == m_wait_lock) {
 
 			/* We can mark this subtree as searched */
-			ut_ad(lock->trx->lock.deadlock_mark <= m_mark_start);
+			ut_ad(lock->__trx_delegate->lock.deadlock_mark <= m_mark_start);
 
-			lock->trx->lock.deadlock_mark = ++s_lock_mark_counter;
+			lock->__trx_delegate->lock.deadlock_mark = ++s_lock_mark_counter;
 
 			/* We are not prepared for an overflow. This 64-bit
 			counter should never wrap around. At 10^9 increments
@@ -7737,7 +7746,7 @@ DeadlockChecker::search()
 			/* No conflict, next lock */
 			lock = get_next_lock(lock, heap_no);
 
-		} else if (lock->trx == m_start) {
+		} else if (lock->__trx_delegate == m_start) {
 
 			/* Found a cycle. */
 
@@ -7752,7 +7761,7 @@ DeadlockChecker::search()
 			m_too_deep = true;
 			return(m_start);
 
-		} else if (lock->trx->lock.que_state == TRX_QUE_LOCK_WAIT) {
+		} else if (lock->__trx_delegate->lock.que_state == TRX_QUE_LOCK_WAIT) {
 
 			/* Another trx ahead has requested a lock in an
 			incompatible mode, and is itself waiting for a lock. */
@@ -7765,7 +7774,7 @@ DeadlockChecker::search()
 			}
 
 
-			m_wait_lock = lock->trx->lock.wait_lock;
+			m_wait_lock = lock->__trx_delegate->lock.wait_lock;
 
 			lock = get_first_lock(&heap_no);
 
@@ -7823,30 +7832,38 @@ unsigned long trx_mutex_exit_orbit(size_t argc, unsigned long argv[])
 	return 0;
 }
 
+unsigned long set_chosen(size_t argc, unsigned long argv[])
+{
+	trx_t *trx = (trx_t *)argv[0];
+	trx->lock.was_chosen_as_deadlock_victim = true;
+	return 0;
+}
+
 /** Rollback transaction selected as the victim. */
 void
-DeadlockChecker::trx_rollback(orbit_scratch *scratch, trx_t *victim_trx)
+DeadlockChecker::trx_rollback(orbit_scratch *scratch, trx_delegate_t *victim_trx)
 {
 	if (scratch) {
 		// ut_ad(lock_mutex_own());
 
 		// trx_t*	trx = m_wait_lock->trx;
-		trx_t*	trx = victim_trx;
+		// trx_t*	trx = victim_trx->orbit_dispatcher();
 
 		print("*** WE ROLL BACK TRANSACTION (1)\n");
 
-		TrxVersion info(trx);
+		TrxVersion info(victim_trx);
 		orbit_scratch_push_any(scratch, &info, sizeof(info));
 
 		/* unsigned long args[] = {(unsigned long)trx};
 		orbit_scratch_push_operation(scratch, trx_mutex_enter_orbit,
 			1, args); */
 
-		orbit_update(scratch,
-			trx->lock.was_chosen_as_deadlock_victim, true);
+		/* orbit_update(scratch,
+			trx->lock.was_chosen_as_deadlock_victim, true); */
+		unsigned long argv[] = { (unsigned long)victim_trx->orbit_dispatcher() };
+		orbit_scratch_push_operation(scratch, set_chosen, 1, argv);
 
-		lock_cancel_waiting_and_release_orbit(
-			trx->lock.wait_lock, scratch);
+		lock_cancel_waiting_and_release_orbit(victim_trx->lock.wait_lock, scratch);
 
 		/* orbit_scratch_push_operation(scratch, trx_mutex_exit_orbit,
 			1, args); */
@@ -7874,9 +7891,9 @@ orbit_pool *scratch_pool = orbit_pool_create(NULL, 64 * 1024 * 1024);
 int scratch_init = orbit_scratch_set_pool(scratch_pool);
 
 const trx_t*
-DeadlockChecker::check_and_resolve_inner(const lock_t* lock, trx_t* trx)
+DeadlockChecker::check_and_resolve_inner(const lock_t* lock, trx_delegate_t* trx)
 {
-	const trx_t*	victim_trx;
+	const trx_delegate_t*	victim_trx;
 
 	/* Try and resolve as many deadlocks as possible. */
 	do {
@@ -7893,7 +7910,8 @@ DeadlockChecker::check_and_resolve_inner(const lock_t* lock, trx_t* trx)
 			ut_ad(trx == checker.m_start);
 			ut_ad(trx == victim_trx);
 
-			rollback_print(victim_trx, lock);
+			/* FIXMETHIS: orbit_op */
+			// rollback_print(victim_trx, lock);
 
 			MONITOR_INC(MONITOR_DEADLOCK);
 
@@ -7901,14 +7919,14 @@ DeadlockChecker::check_and_resolve_inner(const lock_t* lock, trx_t* trx)
 
 		// } else if (victim_trx != NULL && victim_trx != trx) {
 		} else if (victim_trx != NULL) {
-			ut_ad(victim_trx == checker.m_wait_lock->trx);
+			ut_ad(victim_trx == checker.m_wait_lock->__trx_delegate);
 
 			orbit_scratch_create(&dld_scratch);
 
 			/* fprintf(stderr, "in checker before rollback sleeping 2s\n");
 			sleep(2); */
 			fprintf(stderr, "in checker before rollback\n");
-			checker.trx_rollback(&dld_scratch, (trx_t *)victim_trx);
+			checker.trx_rollback(&dld_scratch, (trx_delegate_t*)victim_trx);
 
 			// lock_deadlock_found = true;
 			orbit_update(&dld_scratch, lock_deadlock_found, true);
@@ -7929,15 +7947,14 @@ DeadlockChecker::check_and_resolve_inner(const lock_t* lock, trx_t* trx)
 
 	/* TODO: fix the return value, and/or modify rollback to allow
 	 * rolling back the current trx. */
-	return victim_trx;
+	return victim_trx ? victim_trx->orbit_dispatcher() : NULL;
 }
 
 unsigned long
 DeadlockChecker::check_and_resolve_inner_orbit(void *store, void *argbuf)
 {
-	return 0;
 	orbit_args *args = (orbit_args*)argbuf;
-	obprintf(stderr, "in checker args = %p\n", args);
+	obprintf(stderr, "in checker args=%p, lock=%p, trx=%p\n", args, args->lock, args->trx);
 	return (unsigned long)check_and_resolve_inner(args->lock, args->trx);
 }
 
@@ -8003,8 +8020,8 @@ void *checker_wait_func(void *aux)
 			int ret = orbit_recvv(&result, &task);
 			if (ret == -1) {
 				int err = errno;
-				fprintf(stderr, "get error: %s\n", strerror(err));
-				abort();
+				obprintf(stderr, "get error: %s\n", strerror(err));
+				break;
 			}
 			obprintf(stderr, "orbit_recvv returns %d\n", ret);
 
@@ -8066,12 +8083,17 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 		check_and_resolve_inner_orbit, NULL);
 
 	// victim_trx = check_and_resolve_inner(lock, trx);
-	orbit_args args = { .lock = lock, .trx = trx, };
+	orbit_args args = { .lock = lock, .trx = trx->orbit_trx_delegate(), };
 	obprintf(stderr, "before checker args = %p\n", &args);
 
 	orbit_task task;
 	orbit_pool *pools[] = { default_ob_pool, trx_ob_pool, };
-	int ret = orbit_call_async(dld_ob, 0, sizeof(pools)/sizeof(*pools),
+        unsigned long flags = ORBIT_CANCELLABLE;
+	// flags |= ORBIT_CANCEL_ANY;
+	// flags |= ORBIT_CANCEL_SAME_ARG;
+	// flags |= ORBIT_SKIP_ANY;
+	// flags |= ORBIT_SKIP_SAME_ARG;
+	int ret = orbit_call_async(dld_ob, flags, sizeof(pools)/sizeof(*pools),
 			pools, NULL, &args, sizeof(args), &task);
 	obprintf(stderr, "orbit_call_async returns %d\n", ret);
 	if (ret != 0) abort();
@@ -8079,6 +8101,14 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 #if 1
 
 	trx_mutex_enter(trx);
+
+	/* Orbit task cancellation */
+	/* if (trx->lock.has_orbit) {
+		orbit_task old_task = trx->lock.dl_ck_task;
+		orbit_cancel_by_task(&old_task);
+	} */
+	trx->has_orbit = true;
+	trx->dl_ck_task = task;
 
 	pthread_spin_lock(&checker_wait_lock);
 	checker_wait_queue.push_back(task);

@@ -699,8 +699,22 @@ The tranasction must be in the mysql_trx_list. */
 
 typedef std::vector<ib_lock_t*, ut_allocator<ib_lock_t*> >	lock_pool_t;
 
-struct trx_lock_delegate_t {
-	lock_t*		wait_lock;
+struct trx_delegate_t {
+	trx_t *__orbit_trx;
+
+	trx_state_t	state;
+	struct {
+		trx_que_t	que_state;
+		lock_t*		wait_lock;
+		ib_uint64_t	deadlock_mark;
+		trx_lock_list_t trx_locks;
+		bool		cancel;
+	} lock;
+	undo_no_t	undo_no;
+	ib_vector_t*	autoinc_locks;
+	ulint		version;
+
+	trx_t *orbit_dispatcher() const { return __orbit_trx; }
 };
 
 /*******************************************************************//**
@@ -728,7 +742,7 @@ lock_sys->mutex, trx->mutex or both. */
 struct trx_lock_t {
 	ulint		n_active_thrs;	/*!< number of active query threads */
 
-	trx_que_t	que_state;	/*!< valid when trx->state
+	trx_que_t&	que_state;	/*!< valid when trx->state
 					== TRX_STATE_ACTIVE: TRX_QUE_RUNNING,
 					TRX_QUE_LOCK_WAIT, ... */
 
@@ -774,7 +788,7 @@ struct trx_lock_t {
 	mem_heap_t*	lock_heap;	/*!< memory heap for trx_locks;
 					protected by lock_sys->mutex */
 
-	trx_lock_list_t trx_locks;	/*!< locks requested by the transaction;
+	trx_lock_list_t& trx_locks;	/*!< locks requested by the transaction;
 					insertions are protected by trx->mutex
 					and lock_sys->mutex; removals are
 					protected by lock_sys->mutex */
@@ -782,7 +796,7 @@ struct trx_lock_t {
 	lock_pool_t	table_locks;	/*!< All table locks requested by this
 					transaction, including AUTOINC locks */
 
-	bool		cancel;		/*!< true if the transaction is being
+	bool&		cancel;		/*!< true if the transaction is being
 					rolled back either via deadlock
 					detection or due to lock timeout. The
 					caller has to acquire the trx_t::mutex
@@ -801,7 +815,7 @@ struct trx_lock_t {
 
 	/** Constructor to set up delegate object.
 	Only for TrxFactory::init internal use. */
-	trx_lock_t(trx_lock_delegate_t *);
+	trx_lock_t(trx_delegate_t *);
 
 	/** Destructor to only destroy delegate object.
 	Only for TrxFactory::init internal use. */
@@ -893,6 +907,7 @@ enum trx_rseg_type_t {
 
 struct TrxVersion {
 	TrxVersion(trx_t* trx);
+	TrxVersion(trx_delegate_t* trx);
 
 	/**
 	@return true if the trx_t instance is the same */
@@ -1006,7 +1021,7 @@ struct trx_t {
 	currently only required for a consistent view for printing stats.
 	This unnecessarily adds a huge cost for the general case. */
 
-	trx_state_t	state;
+	trx_state_t&	state;
 
 	/* If set, this transaction should stop inheriting (GAP)locks.
 	Generally set to true during transaction prepare for RC or lower
@@ -1030,6 +1045,11 @@ struct trx_t {
 					locks and state. Protected by
 					trx->mutex or lock_sys->mutex
 					or both */
+	trx_delegate_t*	__orbit_delegate;
+	bool		has_orbit;	/*!< Whether there is an orbit task */
+	orbit_task	dl_ck_task;	/*!< Deadlock detection orbit task to
+					be waited */
+
 	bool		is_recovered;	/*!< 0=normal transaction,
 					1=recovered, must be rolled back,
 					protected by trx_sys->mutex when
@@ -1185,7 +1205,7 @@ struct trx_t {
 					accessed only when we know that there
 					cannot be any activity in the undo
 					logs! */
-	undo_no_t	undo_no;	/*!< next undo log record number to
+	undo_no_t&	undo_no;	/*!< next undo log record number to
 					assign; since the undo log is
 					private for a transaction, this
 					is a simple ascending sequence
@@ -1213,7 +1233,7 @@ struct trx_t {
 	ulint		n_autoinc_rows;	/*!< no. of AUTO-INC rows required for
 					an SQL statement. This is useful for
 					multi-row INSERTs */
-	ib_vector_t*    autoinc_locks;  /* AUTOINC locks held by this
+	ib_vector_t*&	autoinc_locks;  /* AUTOINC locks held by this
 					transaction. Note that these are
 					also in the lock list trx_locks. This
 					vector needs to be freed explicitly
@@ -1267,7 +1287,7 @@ struct trx_t {
 	instance is re-used in trx_start_low(). It is used to track
 	whether a transaction has been restarted since it was tagged
 	for asynchronous rollback. */
-	ulint		version;
+	ulint&		version;
 
 	XID*		xid;		/*!< X/Open XA transaction
 					identification to identify a
@@ -1291,7 +1311,11 @@ struct trx_t {
 #endif /* UNIV_DEBUG */
 	ulint		magic_n;
 
-	/* TODO: delegate() API for orbit use */
+	trx_t(trx_delegate_t *);
+	~trx_t();
+
+	/** Get orbit delegate object for the containing trx */
+	trx_delegate_t *orbit_trx_delegate() { return __orbit_delegate; }
 };
 
 /**

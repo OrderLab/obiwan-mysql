@@ -86,6 +86,14 @@ TrxVersion::TrxVersion(trx_t* trx)
 	/* No op */
 }
 
+TrxVersion::TrxVersion(trx_delegate_t* trx)
+	:
+	m_trx(trx->orbit_dispatcher()),
+	m_version(trx->version)
+{
+	/* No op */
+}
+
 /** Set flush observer for the transaction
 @param[in/out]	trx		transaction struct
 @param[in]	observer	flush observer */
@@ -219,6 +227,8 @@ trx_init(
 
 	trx->flush_observer = NULL;
 
+	trx->has_orbit = false;
+
 	++trx->version;
 }
 
@@ -228,8 +238,20 @@ extern orbit_allocator *trx_oballoc;
 extern orbit_allocator *rec_lock_oballoc;
 extern orbit_allocator *table_lock_oballoc;
 
-trx_lock_t::trx_lock_t(trx_lock_delegate_t *d)
-	: wait_lock(d->wait_lock)
+trx_t::trx_t(trx_delegate_t *d)
+	: state(d->state), lock(d), __orbit_delegate(d),
+	undo_no(d->undo_no), autoinc_locks(d->autoinc_locks), version(d->version)
+{
+	d->__orbit_trx = this;
+}
+
+trx_t::~trx_t()
+{
+}
+
+trx_lock_t::trx_lock_t(trx_delegate_t *d)
+	: que_state(d->lock.que_state), wait_lock(d->lock.wait_lock),
+	trx_locks(d->lock.trx_locks), cancel(d->lock.cancel)
 {
 }
 
@@ -251,9 +273,10 @@ struct TrxFactory {
 		allocated object. trx_t objects are allocated by
 		ut_zalloc() in Pool::Pool() which would not call
 		the constructors of the trx_t members. */
-		new(&trx->lock) trx_lock_t(
-			(trx_lock_delegate_t*)orbit_alloc(
-				trx_oballoc, sizeof(trx_lock_delegate_t)));
+		trx_delegate_t *trx_delegate = (trx_delegate_t*)
+			orbit_alloc(trx_oballoc, sizeof(trx_delegate_t));
+
+		new(trx) trx_t(trx_delegate);
 
 		new(&trx->mod_tables) trx_mod_tables_t();
 
@@ -354,9 +377,8 @@ struct TrxFactory {
 
 		trx->hit_list.~hit_list_t();
 
-		trx_lock_delegate_t *delegate =
-			(trx_lock_delegate_t *)&trx->lock.wait_lock;
-		trx->lock.~trx_lock_t();
+		trx_delegate_t *delegate = trx->orbit_trx_delegate();
+		trx->~trx_t();
 		orbit_free(trx_oballoc, delegate);
 	}
 

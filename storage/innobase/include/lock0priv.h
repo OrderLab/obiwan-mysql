@@ -115,10 +115,26 @@ operator<<(std::ostream& out, const lock_rec_t& lock)
 	return(lock.print(out));
 }
 
+struct trx_delegate_t;
+
 /** Lock struct; protected by lock_sys->mutex */
 struct lock_t {
+	/* struct trx_delegate_shim {
+		trx_t*	__trx;
+		trx_delegate_t*	__trx_delegate;
+		operator trx_t*() { return __trx; }
+		trx_delegate_shim(trx_t *trx)
+			: __trx(trx), __trx_delegate(NULL) {}
+		trx_t *operator=(trx_t *rhs) {
+			__trx = rhs;
+			// __trx_delegate = __trx->orbit_delegate();
+		}
+		trx_t *&operator->() { return __trx; }
+	}; */
 	trx_t*		trx;		/*!< transaction owning the
 					lock */
+	trx_delegate_t*	__trx_delegate;
+
 	UT_LIST_NODE_T(lock_t)
 			trx_locks;	/*!< list of the locks of the
 					transaction */
