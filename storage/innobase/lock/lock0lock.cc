@@ -71,6 +71,8 @@ Created 5/7/1996 Heikki Tuuri
 		orbit_scratch_push_update((scratch), &(lval), sizeof(rval)); \
 	} while (0)
 
+#define OB_ASYNC_MODE
+
 /* Flag to enable/disable deadlock detector. */
 my_bool	innobase_deadlock_detect = TRUE;
 
@@ -1838,6 +1840,7 @@ RecLock::add_to_waitq(const lock_t* wait_for, const lock_prdt_t* prdt)
 	}
 
 	ut_ad(lock_get_wait(lock));
+#ifdef OB_ASYNC_MODE
 
 	DeadlockChecker::check_and_resolve(lock, m_trx);
 
@@ -1850,7 +1853,7 @@ RecLock::add_to_waitq(const lock_t* wait_for, const lock_prdt_t* prdt)
 	thd_report_row_lock_wait(current_thd, wait_for->trx->mysql_thd);
 
 	return DB_LOCK_WAIT;
-#if 0
+#else
 
 	dberr_t	err = deadlock_check(lock);
 
@@ -3823,6 +3826,7 @@ lock_table_create(
 	there is no wait involved else we allocate the waiting lock
 	from the transaction lock heap. */
 	if (type_mode == LOCK_AUTO_INC) {
+		obprintf(stderr, "Orbit allocating table lock as autoinc lock.\n");
 
 		lock = table->autoinc_lock;
 
@@ -3831,6 +3835,7 @@ lock_table_create(
 		ib_vector_push(trx->autoinc_locks, &lock);
 
 	} else if (trx->lock.table_cached < trx->lock.table_pool.size()) {
+		obprintf(stderr, "Orbit allocating table lock from cache.\n");
 		lock = trx->lock.table_pool[trx->lock.table_cached++];
 	} else {
 
@@ -4056,7 +4061,9 @@ lock_table_enqueue_waiting(
 	const trx_t*	victim_trx =
 			DeadlockChecker::check_and_resolve(lock, trx);
 
-#if 0
+#ifdef OB_ASYNC_MODE
+	(void)victim_trx;
+#else
 	if (victim_trx != 0) {
 		ut_ad(victim_trx == trx);
 
@@ -7566,6 +7573,7 @@ DeadlockChecker::get_first_lock(ulint* heap_no) const
 	ut_ad(lock_mutex_own());
 
 	const lock_t*	lock = m_wait_lock;
+	obprintf(stderr, "get_first_lock %p\n", lock);
 
 	if (lock_get_type_low(lock) == LOCK_REC) {
 		hash_table_t*	lock_hash;
@@ -7917,15 +7925,18 @@ DeadlockChecker::check_and_resolve_inner(const lock_t* lock, trx_delegate_t* trx
 
 			break;
 
-		// } else if (victim_trx != NULL && victim_trx != trx) {
+#ifdef OB_ASYNC_MODE
 		} else if (victim_trx != NULL) {
+#else
+		} else if (victim_trx != NULL && victim_trx != trx) {
+#endif
 			ut_ad(victim_trx == checker.m_wait_lock->__trx_delegate);
 
 			orbit_scratch_create(&dld_scratch);
 
 			/* fprintf(stderr, "in checker before rollback sleeping 2s\n");
 			sleep(2); */
-			fprintf(stderr, "in checker before rollback\n");
+			obprintf(stderr, "in checker before rollback\n");
 			checker.trx_rollback(&dld_scratch, (trx_delegate_t*)victim_trx);
 
 			// lock_deadlock_found = true;
@@ -7933,9 +7944,9 @@ DeadlockChecker::check_and_resolve_inner(const lock_t* lock, trx_delegate_t* trx
 
 			MONITOR_INC(MONITOR_DEADLOCK);
 
-			fprintf(stderr, "in checker before sending\n");
+			obprintf(stderr, "in checker before sending\n");
 			orbit_sendv(&dld_scratch);
-			fprintf(stderr, "in checker after sending\n");
+			obprintf(stderr, "in checker after sending\n");
 
 			/* TODO: allow rollback multiple transactions */
 			return NULL;
@@ -7943,7 +7954,8 @@ DeadlockChecker::check_and_resolve_inner(const lock_t* lock, trx_delegate_t* trx
 
 	} while (victim_trx != NULL && victim_trx != trx);
 
-	obprintf(stderr, "in checker loop ended\n");
+	obprintf(stderr, "in checker loop ended, victim_trx %p %p\n",
+		victim_trx, victim_trx ? victim_trx->orbit_dispatcher() : NULL);
 
 	/* TODO: fix the return value, and/or modify rollback to allow
 	 * rolling back the current trx. */
@@ -7965,9 +7977,10 @@ int checker_wait_queue_lock_init = sem_init(&checker_wait_queue_sem, 0, 0);
 pthread_spinlock_t checker_wait_lock;
 int checker_wait_lock_init = pthread_spin_init(&checker_wait_lock, PTHREAD_PROCESS_PRIVATE);
 
-void apply_rollback(struct orbit_scratch *s)
+void apply_rollback(struct orbit_scratch *s, bool need_lock)
 {
 	orbit_repr *record;
+	obprintf(stderr, "start applying rollback from scratch, n_rec=%lu\n", s->count);
 	while ((record = orbit_scratch_first(s)) != NULL) {
 		assert(record->type == ORBIT_ANY);
 
@@ -7976,20 +7989,22 @@ void apply_rollback(struct orbit_scratch *s)
 		ulint	version = info->m_version;
 
 		/* Check if the trx sys is still running? */
-		trx_sys_mutex_enter();
+		obprintf(stderr, "before trx_sys_mutex_enter, %d\n", need_lock);
+		if (need_lock) trx_sys_mutex_enter();
+		obprintf(stderr, "after trx_sys_mutex_enter\n");
 
 		if ((victim_trx->mysql_trx_list.prev || victim_trx->mysql_trx_list.next) &&
 			version == victim_trx->version &&
 			victim_trx->state == TRX_STATE_ACTIVE &&
 			victim_trx->lock.wait_lock != NULL)
 		{
-			fprintf(stderr, "victim to rollback %p\n", victim_trx);
+			obprintf(stderr, "victim to rollback %p\n", victim_trx);
 			assert(victim_trx->lock.que_state == TRX_QUE_LOCK_WAIT);
 
 			trx_mutex_enter(victim_trx);
-			fprintf(stderr, "rollback locked\n");
+			obprintf(stderr, "rollback locked\n");
 			assert(victim_trx->lock.que_state == TRX_QUE_LOCK_WAIT);
-			trx_sys_mutex_exit();
+			if (need_lock) trx_sys_mutex_exit();
 
 			orbit_skip_one(s, false);
 			orbit_apply(s, true);
@@ -7997,12 +8012,34 @@ void apply_rollback(struct orbit_scratch *s)
 			trx_mutex_exit(victim_trx);
 		} else {
 			fprintf(stderr, "victim will not rollback\n");
-			trx_sys_mutex_exit();
+			if (need_lock) trx_sys_mutex_exit();
 
 			orbit_skip_one(s, false);
 			orbit_skip(s, true);
 		}
 	}
+}
+
+const trx_t* checker_wait_one(struct orbit_task *task, bool need_lock)
+{
+	do {
+		union orbit_result result;
+		obprintf(stderr, "before recvv\n");
+		int ret = orbit_recvv(&result, task);
+		if (ret == -1) {
+			int err = errno;
+			fprintf(stderr, "get error: %s\n", strerror(err));
+			return NULL;
+		}
+		obprintf(stderr, "orbit_recvv returns %d\n", ret);
+
+		if (ret == 0)
+			return (const trx_t*)result.retval;
+		if (need_lock) lock_mutex_enter();
+		/* Stale check */
+		apply_rollback(&result.scratch, true);
+		if (need_lock) lock_mutex_exit();
+	} while (true);
 }
 
 void *checker_wait_func(void *aux)
@@ -8014,24 +8051,7 @@ void *checker_wait_func(void *aux)
 		checker_wait_queue.pop_front();
 		pthread_spin_unlock(&checker_wait_lock);
 
-		do {
-			union orbit_result result;
-			obprintf(stderr, "before recvv\n");
-			int ret = orbit_recvv(&result, &task);
-			if (ret == -1) {
-				int err = errno;
-				obprintf(stderr, "get error: %s\n", strerror(err));
-				break;
-			}
-			obprintf(stderr, "orbit_recvv returns %d\n", ret);
-
-			if (ret == 0)
-				break;
-			lock_mutex_enter();
-			/* Stale check */
-			apply_rollback(&result.scratch);
-			lock_mutex_exit();
-		} while (true);
+		checker_wait_one(&task, true);
 	}
 }
 
@@ -8077,7 +8097,7 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 
 	trx_mutex_exit(trx);
 
-	const trx_t*	victim_trx;
+	const trx_t*	victim_trx = NULL;
 
 	static orbit_module *dld_ob = orbit_create("DL CK",
 		check_and_resolve_inner_orbit, NULL);
@@ -8088,6 +8108,8 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 
 	orbit_task task;
 	orbit_pool *pools[] = { default_ob_pool, trx_ob_pool, };
+	obprintf(stderr, "before obcall pool size default=0x%lx trx=0x%lx\n",
+		default_ob_pool->used, trx_ob_pool->used);
         unsigned long flags = ORBIT_CANCELLABLE;
 	// flags |= ORBIT_CANCEL_ANY;
 	// flags |= ORBIT_CANCEL_SAME_ARG;
@@ -8098,7 +8120,7 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 	obprintf(stderr, "orbit_call_async returns %d\n", ret);
 	if (ret != 0) abort();
 
-#if 1
+#ifdef OB_ASYNC_MODE
 
 	trx_mutex_enter(trx);
 
@@ -8118,23 +8140,7 @@ DeadlockChecker::check_and_resolve(const lock_t* lock, trx_t* trx)
 	return NULL;
 
 #else
-	do {
-		union orbit_result result;
-		obprintf(stderr, "before recvv\n");
-		ret = orbit_recvv(&result, &task);
-		if (ret == -1) {
-			int err = errno;
-			fprintf(stderr, "get error: %s\n", strerror(err));
-			abort();
-		}
-		obprintf(stderr, "orbit_recvv returns %d\n", ret);
-
-		if (ret == 0) {
-			victim_trx = (trx_t *)result.retval;
-			break;
-		}
-		orbit_apply(&result.scratch);
-	} while (true);
+	victim_trx = checker_wait_one(&task, false);
 
 	obprintf(stderr, "after checker result = %p\n", victim_trx);
 	// end of check_and_resolve_inner equivalent call
