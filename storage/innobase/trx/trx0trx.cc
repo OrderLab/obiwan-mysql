@@ -456,7 +456,7 @@ orbit_allocator *trx_oballoc = table_lock_oballoc = orbit_allocator_from_pool(tr
 void
 trx_pool_init()
 {
-	trx_pools = UT_NEW_NOKEY(trx_pools_t(MAX_TRX_BLOCK_SIZE, trx_ob_pool));
+	trx_pools = UT_NEW_NOKEY(trx_pools_t(MAX_TRX_BLOCK_SIZE, trx_oballoc));
 
 	ut_a(trx_pools != 0);
 }

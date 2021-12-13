@@ -8118,7 +8118,7 @@ lock_trx_alloc_locks(trx_t* trx)
 {
 	ulint	sz = REC_LOCK_SIZE * REC_LOCK_CACHE;
 	// byte*	ptr = reinterpret_cast<byte*>(ut_malloc_nokey(sz));
-	byte*	ptr = reinterpret_cast<byte*>(orbit_pool_alloc(rec_lock_ob_pool, sz));
+	byte*	ptr = reinterpret_cast<byte*>(orbit_alloc(rec_lock_oballoc, sz));
 
 	/* We allocate one big chunk and then distribute it among
 	the rest of the elements. The allocated chunk pointer is always
