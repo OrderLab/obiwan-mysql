@@ -940,10 +940,6 @@ Allocate cached locks for the transaction.
 void
 lock_trx_alloc_locks(trx_t* trx);
 
-// This only frees rec bitmap
-void
-lock_trx_free_locks(trx_t* trx);
-
 /** Lock modes and types */
 /* @{ */
 #define LOCK_MODE_MASK	0xFUL	/*!< mask used to extract mode from the

@@ -312,7 +312,6 @@ struct TrxFactory {
 			mem_heap_free(trx->lock.lock_heap);
 			trx->lock.lock_heap = NULL;
 		}
-		// FIXME: non-cache locks in orbit pool should also be freed
 
 		ut_a(UT_LIST_GET_LEN(trx->lock.trx_locks) == 0);
 
@@ -331,8 +330,6 @@ struct TrxFactory {
 			/* See lock_trx_alloc_locks() why we only free
 			the first element. */
 
-			// This only frees rec bitmap
-			lock_trx_free_locks(trx);
 			orbit_free(table_lock_oballoc, trx->lock.rec_pool[0]);
 			// ut_free(trx->lock.rec_pool[0]);
 		}
@@ -461,27 +458,6 @@ static trx_pools_t* trx_pools;
 static const ulint MAX_TRX_BLOCK_SIZE = 1024 * 1024 * 4;
 
 // default 64M
-#if 0
-orbit_pool *default_ob_pool = orbit_pool_create_at(NULL, 1024 * 1024 * 64, (void*)0x800000000UL);
-orbit_pool *trx_ob_pool = orbit_pool_create_at(NULL, 1024 * 1024 * 64, (void*)0x810000000UL);
-orbit_pool *rec_lock_ob_pool = orbit_pool_create_at(NULL, 1024 * 1024 * 64, (void*)0x820000000UL);
-orbit_pool *table_lock_ob_pool = orbit_pool_create_at(NULL, 1024 * 1024 * 64, (void*)0x830000000UL);
-
-orbit_allocator *default_oballoc = orbit_allocator_from_pool(default_ob_pool, true);
-orbit_allocator *trx_oballoc = orbit_allocator_from_pool(trx_ob_pool, true);
-orbit_allocator *rec_lock_oballoc = orbit_allocator_from_pool(rec_lock_ob_pool, true);
-orbit_allocator *table_lock_oballoc = orbit_allocator_from_pool(table_lock_ob_pool, true);
-#elif 0
-orbit_pool *default_ob_pool;
-orbit_pool *trx_ob_pool = orbit_pool_create_at(NULL, 1024 * 1024 * 64, (void*)0x810000000UL);
-orbit_pool *rec_lock_ob_pool;
-orbit_pool *table_lock_ob_pool = default_ob_pool = rec_lock_ob_pool = orbit_pool_create_at(NULL, 1024 * 1024 * 64, (void*)0x830000000UL);
-
-orbit_allocator *default_oballoc;
-orbit_allocator *trx_oballoc = orbit_allocator_from_pool(trx_ob_pool, true);
-orbit_allocator *rec_lock_oballoc;
-orbit_allocator *table_lock_oballoc = default_oballoc = rec_lock_oballoc = orbit_allocator_from_pool(table_lock_ob_pool, true);
-#elif 1
 orbit_pool *rec_lock_ob_pool;
 orbit_pool *table_lock_ob_pool;
 orbit_pool *default_ob_pool = rec_lock_ob_pool = orbit_pool_create_at(NULL, 1024 * 1024 * 64, (void*)0x810000000UL);
@@ -493,17 +469,6 @@ orbit_allocator *rec_lock_oballoc;
 orbit_allocator *table_lock_oballoc;
 orbit_allocator *default_oballoc = rec_lock_oballoc = orbit_allocator_from_pool(default_ob_pool, true);
 orbit_allocator *trx_oballoc = table_lock_oballoc = orbit_allocator_from_pool(trx_ob_pool, true);
-#else
-orbit_pool *default_ob_pool;
-orbit_pool *trx_ob_pool;
-orbit_pool *rec_lock_ob_pool;
-orbit_pool *table_lock_ob_pool = default_ob_pool = trx_ob_pool = rec_lock_ob_pool = orbit_pool_create_at(NULL, 1024 * 1024 * 64, (void*)0x800000000UL);
-
-orbit_allocator *default_oballoc;
-orbit_allocator *trx_oballoc;
-orbit_allocator *rec_lock_oballoc;
-orbit_allocator *table_lock_oballoc = default_oballoc = trx_oballoc = rec_lock_oballoc = orbit_allocator_from_pool(table_lock_ob_pool, true);
-#endif
 
 /** Create the trx_t pool */
 void

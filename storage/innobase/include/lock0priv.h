@@ -89,7 +89,6 @@ struct lock_rec_t {
 					bitmap; NOTE: the lock bitmap is
 					placed immediately after the
 					lock struct */
-	byte		*bits;
 
 	/** Print the record lock into the given output stream
 	@param[in,out]	out	the output stream
