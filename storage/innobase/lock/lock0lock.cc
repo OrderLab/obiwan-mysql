@@ -470,21 +470,6 @@ extern orbit_pool *trx_ob_pool;
 extern orbit_pool *rec_lock_ob_pool;
 extern orbit_pool *table_lock_ob_pool;
 
-lock_sys_t::lock_sys_t()
-	: 
-	mutex(*reinterpret_cast<LockMutex*>(
-		ut_malloc_nokey(sizeof(lock_sys->mutex)))),
-	wait_mutex(*reinterpret_cast<LockMutex*>(
-		ut_malloc_nokey(sizeof(lock_sys->wait_mutex))))
-{
-}
-
-lock_sys_t::~lock_sys_t()
-{
-	ut_free(&lock_sys->mutex);
-	ut_free(&lock_sys->wait_mutex);
-}
-
 /*********************************************************************//**
 Creates the lock system at database start. */
 void
@@ -498,7 +483,6 @@ lock_sys_create(
 
 	lock_sys = static_cast<lock_sys_t*>(
 			orbit_alloc(default_oballoc, lock_sys_sz));
-	new(lock_sys) lock_sys_t();
 
 	void*	ptr = &lock_sys[1];
 
