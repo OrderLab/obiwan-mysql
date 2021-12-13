@@ -699,10 +699,6 @@ The tranasction must be in the mysql_trx_list. */
 
 typedef std::vector<ib_lock_t*, ut_allocator<ib_lock_t*> >	lock_pool_t;
 
-struct trx_lock_delegate_t {
-	lock_t*		wait_lock;
-};
-
 /*******************************************************************//**
 Latching protocol for trx_lock_t::que_state.  trx_lock_t::que_state
 captures the state of the query thread during the execution of a query.
@@ -732,7 +728,7 @@ struct trx_lock_t {
 					== TRX_STATE_ACTIVE: TRX_QUE_RUNNING,
 					TRX_QUE_LOCK_WAIT, ... */
 
-	lock_t*&	wait_lock;	/*!< if trx execution state is
+	lock_t*		wait_lock;	/*!< if trx execution state is
 					TRX_QUE_LOCK_WAIT, this points to
 					the lock request, otherwise this is
 					NULL; set to non-NULL when holding
@@ -798,14 +794,6 @@ struct trx_lock_t {
 	/** The transaction called ha_innobase::start_stmt() to
 	lock a table. Most likely a temporary table. */
 	bool		start_stmt;
-
-	/** Constructor to set up delegate object.
-	Only for TrxFactory::init internal use. */
-	trx_lock_t(trx_lock_delegate_t *);
-
-	/** Destructor to only destroy delegate object.
-	Only for TrxFactory::init internal use. */
-	~trx_lock_t();
 };
 
 /** Type used to store the list of tables that are modified by a given
@@ -1290,8 +1278,6 @@ struct trx_t {
 					Committed on DD tables */
 #endif /* UNIV_DEBUG */
 	ulint		magic_n;
-
-	/* TODO: delegate() API for orbit use */
 };
 
 /**

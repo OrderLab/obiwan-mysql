@@ -228,15 +228,6 @@ extern orbit_allocator *trx_oballoc;
 extern orbit_allocator *rec_lock_oballoc;
 extern orbit_allocator *table_lock_oballoc;
 
-trx_lock_t::trx_lock_t(trx_lock_delegate_t *d)
-	: wait_lock(d->wait_lock)
-{
-}
-
-trx_lock_t::~trx_lock_t()
-{
-}
-
 /** For managing the life-cycle of the trx_t instance that we get
 from the pool. */
 struct TrxFactory {
@@ -251,17 +242,13 @@ struct TrxFactory {
 		allocated object. trx_t objects are allocated by
 		ut_zalloc() in Pool::Pool() which would not call
 		the constructors of the trx_t members. */
-		new(&trx->lock) trx_lock_t(
-			(trx_lock_delegate_t*)orbit_alloc(
-				trx_oballoc, sizeof(trx_lock_delegate_t)));
-
 		new(&trx->mod_tables) trx_mod_tables_t();
 
-		/* new(&trx->lock.rec_pool) lock_pool_t();
+		new(&trx->lock.rec_pool) lock_pool_t();
 
 		new(&trx->lock.table_pool) lock_pool_t();
 
-		new(&trx->lock.table_locks) lock_pool_t(); */
+		new(&trx->lock.table_locks) lock_pool_t();
 
 		new(&trx->hit_list) hit_list_t();
 
@@ -343,18 +330,13 @@ struct TrxFactory {
 			// ut_free(trx->lock.table_pool[0]);
 		}
 
-		/* trx->lock.rec_pool.~lock_pool_t();
+		trx->lock.rec_pool.~lock_pool_t();
 
 		trx->lock.table_pool.~lock_pool_t();
 
-		trx->lock.table_locks.~lock_pool_t(); */
+		trx->lock.table_locks.~lock_pool_t();
 
 		trx->hit_list.~hit_list_t();
-
-		trx_lock_delegate_t *delegate =
-			(trx_lock_delegate_t *)&trx->lock.wait_lock;
-		trx->lock.~trx_lock_t();
-		orbit_free(trx_oballoc, delegate);
 	}
 
 	/** Enforce any invariants here, this is called before the transaction
@@ -474,7 +456,7 @@ orbit_allocator *trx_oballoc = table_lock_oballoc = orbit_allocator_from_pool(tr
 void
 trx_pool_init()
 {
-	trx_pools = UT_NEW_NOKEY(trx_pools_t(MAX_TRX_BLOCK_SIZE, NULL));
+	trx_pools = UT_NEW_NOKEY(trx_pools_t(MAX_TRX_BLOCK_SIZE, trx_ob_pool));
 
 	ut_a(trx_pools != 0);
 }

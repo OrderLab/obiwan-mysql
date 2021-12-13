@@ -7923,7 +7923,6 @@ DeadlockChecker::check_and_resolve_inner(const lock_t* lock, trx_t* trx)
 unsigned long
 DeadlockChecker::check_and_resolve_inner_orbit(void *store, void *argbuf)
 {
-	return 0;
 	orbit_args *args = (orbit_args*)argbuf;
 	obprintf(stderr, "in checker args = %p\n", args);
 	return (unsigned long)check_and_resolve_inner(args->lock, args->trx);
