@@ -75,15 +75,13 @@ Created 5/7/1996 Heikki Tuuri
 my_bool	innobase_deadlock_detect = TRUE;
 
 /** Total number of cached record locks */
-static const ulint	REC_LOCK_CACHE = 1;
-// static const ulint	REC_LOCK_CACHE = 8;
+static const ulint	REC_LOCK_CACHE = 8;
 
 /** Maximum record lock size in bytes */
 static const ulint	REC_LOCK_SIZE = sizeof(ib_lock_t) + 256;
 
 /** Total number of cached table locks */
-static const ulint	TABLE_LOCK_CACHE = 1;
-// static const ulint	TABLE_LOCK_CACHE = 8;
+static const ulint	TABLE_LOCK_CACHE = 8;
 
 /** Size in bytes, of the table lock instance */
 static const ulint	TABLE_LOCK_SIZE = sizeof(ib_lock_t);
@@ -496,19 +494,13 @@ lock_sys_create(
 {
 	ulint	lock_sys_sz;
 
-	/* lock_sys_sz = sizeof(*lock_sys) + OS_THREAD_MAX_N * sizeof(srv_slot_t);
-
-	lock_sys = static_cast<lock_sys_t*>(ut_zalloc_nokey(lock_sys_sz));
-
-	void*	ptr = &lock_sys[1]; */
-
-	lock_sys_sz = sizeof(*lock_sys);
+	lock_sys_sz = sizeof(*lock_sys) + OS_THREAD_MAX_N * sizeof(srv_slot_t);
 
 	lock_sys = static_cast<lock_sys_t*>(
 			orbit_alloc(default_oballoc, lock_sys_sz));
 	new(lock_sys) lock_sys_t();
 
-	void*	ptr = malloc(OS_THREAD_MAX_N * sizeof(srv_slot_t));
+	void*	ptr = &lock_sys[1];
 
 	lock_sys->waiting_threads = static_cast<srv_slot_t*>(ptr);
 
