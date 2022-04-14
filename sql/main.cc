@@ -29,16 +29,14 @@ extern int mysqld_main(int argc, char **argv);
 
 #include <sys/types.h>
 #include <unistd.h>
-#include <thread>
-#include <chrono>
 
 int main(int argc, char **argv)
 {
-	// This is a hack for deadlock checker waiter.
-	// It must have at least one child to wait.
-	if (fork() == 0) {
-		while(true)
-		   std::this_thread::sleep_for(std::chrono::hours(24));
-	}
+  // This is a hack for deadlock checker waiter.
+  // It must have at least one child to wait.
+  if (fork() == 0) {
+    while(true)
+      sleep(100000000);
+  }
   return mysqld_main(argc, argv);
 }

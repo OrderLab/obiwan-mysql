@@ -59,9 +59,7 @@ Created 5/7/1996 Heikki Tuuri
 
 #include <set>
 
-#include <atomic>
 #include <cstdlib>
-#include <thread>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -7600,11 +7598,16 @@ DeadlockChecker::trx_rollback()
 	trx_mutex_exit(trx);
 }
 
-static std::atomic<std::thread*> deadlock_checker_notifier(new std::thread([]() {
+static void *deadlock_checker_notifier(void *aux) {
+	(void)aux;
 	// Wait for all checker child process and assume we do the rollback here
 	while (true)
 		wait(NULL);
-}));
+};
+
+static pthread_t deadlock_checker_notifier_thd;
+static int deadlock_checker_notifier_init = pthread_create(
+	&deadlock_checker_notifier_thd, NULL, deadlock_checker_notifier, NULL);
 
 /** Checks if a joining lock request results in a deadlock. If a deadlock is
 found this function will resolve the deadlock by choosing a victim transaction
