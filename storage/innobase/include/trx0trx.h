@@ -1047,7 +1047,7 @@ struct trx_t {
 					or both */
 	trx_delegate_t*	__orbit_delegate;
 	bool		has_orbit;	/*!< Whether there is an orbit task */
-	orbit_task	dl_ck_task;	/*!< Deadlock detection orbit task to
+	orbit_future	dl_ck_future;	/*!< Deadlock detection orbit future to
 					be waited */
 
 	bool		is_recovered;	/*!< 0=normal transaction,
